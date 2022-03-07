@@ -39,6 +39,7 @@ from qgis.core import (
     QgsProcessingParameterDefinition,
     QgsProcessingParameterMapLayer,
     QgsProcessingParameterMultipleLayers,
+    QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsWkbTypes,
     QgsProcessingParameterNumber,
@@ -49,7 +50,7 @@ from qgis.core import (
     QgsFeature,
     )
 from qgis.PyQt.QtCore import QVariant
-from .framework import VeloGraph, iter_destination_paths, TARGET_CRS, DISTANCE_CALCULATOR
+from .framework import VeloGraph, iter_destination_features, TARGET_CRS, DISTANCE_CALCULATOR
 
 
 class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
@@ -60,7 +61,7 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    OUTPUT = 'OUTPUT'
+    PATHS_OUTPUT = 'PATHS_OUTPUT'
     SIGN_INPUT = 'SIGN_INPUT'
     ROADS_INPUT = 'ROADS_INPUT'
     POIS_INPUT = 'POIS_INPUT'
@@ -91,15 +92,15 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Слои с дорогами'),
                 QgsProcessing.TypeVectorLine
             )
-        )        
+        )    
         self.addParameter(
             QgsProcessingParameterFeatureSink(
-                self.OUTPUT,
+                self.PATHS_OUTPUT,
                 self.tr('Кратчайшие пути'),
-                optional=True,
                 type=QgsProcessing.TypeVectorLine
             )
         )
+
         advanced_params = []
         advanced_params.append(QgsProcessingParameterNumber(self.TOLERANCE,
                                                    self.tr('Topology tolerance'),
@@ -122,13 +123,12 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         
         graph = VeloGraph(roads_layers, [sign_layer]+poi_layers, tolerance, feedback)
         
-        fields = QgsFields()
-        fields.append(QgsField('id', QVariant.Int))
-        fields.append(QgsField('from', QVariant.String))
-        fields.append(QgsField('to', QVariant.String))
-        fields.append(QgsField('length', QVariant.Double))
-        sink, dest_id = self.parameterAsSink(parameters, self.OUTPUT,
-                context, fields, QgsWkbTypes.LineString, TARGET_CRS)
+        path_fields = QgsFields()
+        path_fields.append(QgsField('id', QVariant.Int))
+        path_fields.append(QgsField('length', QVariant.Double))
+        path_sink, path_dest_id = self.parameterAsSink(parameters, self.PATHS_OUTPUT,
+                context, path_fields, QgsWkbTypes.LineString, TARGET_CRS)
+
 
         # Compute the number of steps to display within the progress bar and
         # get features from source
@@ -136,12 +136,31 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         total = 100.0 / (sign_layer.featureCount()*4) if sign_layer.featureCount() else 0
         
         fid = 0
-        sign_xform = QgsCoordinateTransform(sign_layer.sourceCrs(), TARGET_CRS, QgsProject.instance())
-        for poi_layer, poi_feature, sign_feature in iter_destination_paths(sign_layer, poi_layers, feedback):
+        sign_layer.startEditing()
+        for iter_result in iter_destination_features(sign_layer, poi_layers, feedback):
+            # если была нажата кнопка cancel - прерываемся
             if feedback.isCanceled():
-                return {self.OUTPUT: dest_id}
+                break
+            # распаковка результатов (в процессе работы все время меняется, сделал так ля удобства)
+            poi_layer, poi_feature, sign_feature, sign_field_name = iter_result
+            # собираем имена полей с которыми будем работать
+            sign_position = sign_field_name[-2]
+            sign_direction = sign_field_name[-1]
+            sign_eng_field = 'NameEN{}{}'.format(sign_position, sign_direction)
+            sign_km_field = 'km_{}{}'.format(sign_position, sign_direction)
+            sign_pic_field = 'PIC_{}{}'.format(sign_position, sign_direction)
+
+            if poi_feature is None:
+                sign_feature[sign_eng_field] = 'N/A'
+                sign_feature[sign_km_field] = 'N/A'
+                sign_feature[sign_pic_field] = 'N/A'                
             else:
+                # copy eng name field and pic field
+                sign_feature[sign_eng_field] = poi_feature['NameEN']
+                sign_feature[sign_pic_field] = poi_feature['pic']
+                # fill distance field
                 # project points to epsg 4326
+                sign_xform = QgsCoordinateTransform(sign_layer.sourceCrs(), TARGET_CRS, QgsProject.instance())
                 sign_geometry = sign_feature.geometry()
                 sign_geometry.transform(sign_xform)
                 poi_xform = QgsCoordinateTransform(poi_layer.sourceCrs(), TARGET_CRS, QgsProject.instance())
@@ -150,24 +169,35 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
                 # calc shortest path
                 vertex_ids = graph.shortest_path(sign_geometry.asPoint(), poi_geometry.asPoint())
                 if not vertex_ids:
-                    pass
+                    feedback.pushInfo('[processAlgorithm] Cannot build shortest path')
+                    sign_feature[sign_km_field] = 'N/A'
                 else:
-                    path_line = graph.path_vector(vertex_ids)
                     feedback.pushInfo('[processAlgorithm] Shortest path calculated')
-                    # make feature
-                    feature = QgsFeature()
-                    feature.setGeometry(path_line)
-                    feature.setFields(fields)
-                    feature['id'] = fid
-                    feature['from'] = sign_feature['Name']
-                    feature['to'] = poi_feature['NameRU']
-                    feature['length'] = DISTANCE_CALCULATOR.measureLength(path_line)   
-                    # Add a feature in the sink
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                    path_line = graph.path_vector(vertex_ids)
+                    path_length = DISTANCE_CALCULATOR.measureLength(path_line)
+                    sign_feature[sign_km_field] = self.format_length(path_length)
+                    # make path feature
+                    path_feature = QgsFeature()
+                    path_feature.setFields(path_fields)
+                    path_feature.setGeometry(path_line)
+                    path_feature['id'] = fid
+                    path_feature['length'] = path_length
+                    path_sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
                     # Update the progress bar
                     feedback.setProgress(int(fid * total))
                     fid += 1    
-        return {self.OUTPUT: dest_id}
+            sign_layer.updateFeature(sign_feature)
+        sign_layer.commitChanges()
+        return {self.PATHS_OUTPUT: path_dest_id}
+
+    def format_length(self, length):
+        km = length / 1000
+        if km >= 10:
+            formatted_km = str(int(km))
+        else:
+            formatted_km = str(round(km, 1)).replace('.0', '')
+        return formatted_km
+    
 
     def name(self):
         """

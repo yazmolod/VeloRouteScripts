@@ -194,7 +194,7 @@ def find_feature_by_name(name, layers):
                 if nameru_value == name:
                     return layer, feature
                 
-def iter_destination_paths(sign_layer, poi_layers, feedback):
+def iter_destination_features(sign_layer, poi_layers, feedback):
     for sign_feature in sign_layer.getFeatures():
         utils.log('Process feature ' + str(sign_feature['id']), 'Framework', feedback=feedback)
         for sign_field_name,sign_field_value in iter_nameru_fields(sign_feature):
@@ -206,10 +206,11 @@ def iter_destination_paths(sign_layer, poi_layers, feedback):
                 result = find_feature_by_name(sign_field_value, poi_layers)
                 if result is None:
                     utils.log(sign_field_value + ' not found', 'Framework', feedback=feedback)
+                    yield None, None, sign_feature, sign_field_name
                 else:
                     utils.log(sign_field_value + ' founded, calculating shortest path', 'Framework', feedback=feedback)
                     poi_layer, poi_feature = result
-                    yield poi_layer, poi_feature, sign_feature
+                    yield poi_layer, poi_feature, sign_feature, sign_field_name
 
 # sign_layer = QgsProject.instance().mapLayersByName('123_DIR')[0]
 # transport = QgsProject.instance().mapLayersByName('transport')[0]
