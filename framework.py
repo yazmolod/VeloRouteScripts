@@ -20,120 +20,86 @@ from qgis.analysis import (
 from qgis.PyQt.QtCore import QVariant
 from queue import PriorityQueue
 from itertools import chain
+from utils import xform_geometry_4326
+from math import hypot
 
-TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
-DISTANCE_CALCULATOR = QgsDistanceArea()
-DISTANCE_CALCULATOR.setEllipsoid('WGS84')
 
-class VeloGraph:
-    def __init__(self, input_roads_layers, input_points_layers, input_tolerance, feedback):
+
+class DistanceCalculateFramework:
+    TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
+    FIELD_NAME_TEMPLATES = {
+        'NameEN{}{}':'NameEN',
+        'PIC_{}{}':'pic',
+        }
+    
+    SIGN_ROUTECODE_FIELD_NAME = 'routcode'
+    ROAD_ROUTECODE_FIELD_NAME = 'CODE'
+    DISTANCE_CALCULATOR = QgsDistanceArea()
+    DISTANCE_CALCULATOR.setEllipsoid('WGS84')
+    
+    def __init__(self, sign_layer, poi_layers, main_roads_layer, secondary_roads_layer, height_map, feedback):
         self.feedback = feedback
-        merged_road_layer = self.merge_road_layers(input_roads_layers)
-        self.director = QgsVectorLayerDirector(
-            merged_road_layer, 
+        self.sign_layer = sign_layer
+        self.poi_layers = poi_layers
+        self.main_roads_layer = main_roads_layer
+        self.secondary_roads_layer = secondary_roads_layer
+        self.height_provider = height_map.dataProvider()
+        self.build_graph()
+    
+    
+    def build_graph(self):
+        # collect all points and transform them
+        additional_points = []
+        for layer in [self.sign_layer] + self.poi_layers:
+            for feature in layer.getFeatures():
+                geom = xform_geometry_4326(feature.geometry(), layer.source_crs())
+                additional_points.append(geom.asPoint())
+        # build graph
+        paths = self.merge_linestring_layers(main_roads_layer, secondary_roads_layer)
+        director = QgsVectorLayerDirector(
+            paths, 
             directionFieldId = -1, 
             directDirectionValue=None, 
             reverseDirectionValue=None, 
             bothDirectionValue=None, 
             defaultDirection=QgsVectorLayerDirector.DirectionBoth
         )
-        self.director.addStrategy(QgsNetworkDistanceStrategy())
-        self.builder = QgsGraphBuilder(TARGET_CRS, True, input_tolerance)
-        self.additional_points = self.convert_input_point_layers(input_points_layers)
-        self.tied_points_list = self.director.makeGraph(self.builder, self.additional_points, self.feedback)
-        utils.log('Graph init...', 'VeloGraph', '__init__', feedback=self.feedback)
-        self.network = self.builder.graph()
-        utils.log('Graph builded', 'VeloGraph', '__init__', feedback=self.feedback)
-        self.make_tied_edges()
-        
-    def merge_road_layers(self, layers):
-        merged_layer = QgsVectorLayer('LineString', 'merged_edges', 'memory')
-        merged_layer.setCrs(TARGET_CRS)
-        features = []
-        for layer in layers:
-            xform = QgsCoordinateTransform(layer.sourceCrs(), TARGET_CRS, QgsProject.instance())    
-            for feature in layer.getFeatures():
-                geom = feature.geometry()
-                geom.transform(xform)
-                feature.setGeometry(geom)
-                features.append(feature)
-        provider = merged_layer.dataProvider()
-        provider.addFeatures(features)
-        return merged_layer
-        
-    def make_tied_edges(self):
-        for add_pt, tied_pt in zip(self.additional_points, self.tied_points_list):
+        director.addStrategy(QgsNetworkDistanceStrategy())
+        builder = QgsGraphBuilder(self.TARGET_CRS, True, self.graph_tolerance)
+        tied_points_list = director.makeGraph(builder, additional_points, self.feedback)
+        self.feedback.pushInfo('Graph init...', 'VeloGraph')
+        self.network = builder.graph()
+        # make tied edges
+        for add_pt, tied_pt in zip(additional_points, tied_points_list):
             add_id = self.network.addVertex(add_pt)
             tied_id = self.network.findVertex(tied_pt)
             self.network.addEdge(add_id, tied_id, [QgsNetworkDistanceStrategy()])
-        
-    def convert_input_point_layers(self, layers):
-        '''reproject layers geometry in EPSG4326 and extract points'''
-        points = []
-        for layer in layers:
-            xform = QgsCoordinateTransform(layer.sourceCrs(), TARGET_CRS, QgsProject.instance())
-            for feature in layer.getFeatures():
-                geom = feature.geometry()
-                geom.transform(xform)
-                points.append(geom.asPoint())
-        return points
-        
-    def draw_edges(self):
-        layer = QgsVectorLayer('LineString', 'GraphEdges', 'memory')
-        features = []
-        for i in range(self.network.edgeCount()):
-            edge = self.network.edge(i)
-            pts = [self.network.vertex(edge.fromVertex()).point(), self.network.vertex(edge.toVertex()).point()]
-            feature = QgsFeature()
-            feature.setGeometry(QgsGeometry.fromPolylineXY(pts))
-            fields = QgsFields()
-            fields.append(QgsField('edge_id', QVariant.Int))
-            #fields.append(QgsField('cost', QVariant.Double))
-            feature.setFields(fields)
-            feature['edge_id'] = i
-            #feature['cost'] = edge.cost()
-            features.append(feature)
-        provider = layer.dataProvider()
-        provider.addFeatures(features)
-        QgsProject.instance().addMapLayer(layer)
-    
-    def draw_vertexes(self):
-        layer = QgsVectorLayer('Point', 'GraphVertexes', 'memory')
-        features = []
-        for i in range(self.network.vertexCount()):
-            vertex = self.network.vertex(i)
-            point = vertex.point()
-            feature = QgsFeature()
-            feature.setGeometry(QgsGeometry.fromPointXY(point))
-            fields = QgsFields()
-            fields.append(QgsField('vertex_id', QVariant.Int))
-            feature.setFields(fields)
-            feature['vertex_id'] = i
-            features.append(feature)
-        provider = layer.dataProvider()
-        provider.addFeatures(features)
-        QgsProject.instance().addMapLayer(layer)
-            
-    def draw_graph(self):
-        '''debug purpose'''
-        self.draw_vertexes()
-        self.draw_edges()
-       
-    def calc_distance(self, from_vertex_id: int, to_vertex_id: int):
+        self.feedback.pushInfo('Graph builded')
+
+    def calc_vertex_distance(self, from_vertex_id: int, to_vertex_id: int):
         pt1 = self.network.vertex(from_vertex_id).point()
         pt2 = self.network.vertex(from_vertex_id).point()
-        m = DISTANCE_CALCULATOR.measureLine(pt1, pt2)
-        return m
+        l = self.DISTANCE_CALCULATOR.measureLine(pt1, pt2)
+        h = abs(self.get_elevation_at_point(pt1) - self.get_elevation_at_point(pt2))
+        return hypot(l,h)
     
-    def iter_edges(self, vertex_id):
+    def iter_vertex_edges(self, vertex_id):
         vertex = self.network.vertex(vertex_id)
         for iedge in vertex.incomingEdges():
             yield self.network.edge(iedge)    
         for iedge in vertex.outgoingEdges():
             yield self.network.edge(iedge)     
             
-    def cost(self, edge):
-        return self.calc_distance(edge.fromVertex(), edge.toVertex()) 
+    def edge_cost(self, edge):
+        return self.calc_vertex_distance(edge.fromVertex(), edge.toVertex())
+    
+    def get_elevation_at_point(self, pt):
+        if self.height_provider:
+            res = self.height_provider.identify(pt, QgsRaster.IdentifyFormatValue)
+            if res:
+                return res[1]
+        return 0
+
     
     def shortest_path(self, from_geometry: QgsPointXY, to_geometry: QgsPointXY):
         start_vertex_id = self.network.findVertex(from_geometry)
@@ -155,19 +121,19 @@ class VeloGraph:
             _, current_vertex_id = frontier.get()
             if current_vertex_id == finish_vertex_id:
                 break
-            for edge in self.iter_edges(current_vertex_id):
+            for edge in self.iter_vertex_edges(current_vertex_id):
                 next_vertex_id = edge.fromVertex() if edge.fromVertex() != current_vertex_id else edge.toVertex()
-                new_cost = cost_so_far[current_vertex_id] + self.cost(edge)
+                new_cost = cost_so_far[current_vertex_id] + self.edge_cost(edge)
                 if next_vertex_id not in cost_so_far or new_cost < cost_so_far[next_vertex_id]:
                     cost_so_far[next_vertex_id] = new_cost
-                    priority = new_cost + self.calc_distance(next_vertex_id, finish_vertex_id)
+                    priority = new_cost + self.calc_vertex_distance(next_vertex_id, finish_vertex_id)
                     frontier.put((priority, next_vertex_id))
                     came_from[next_vertex_id] = current_vertex_id  
         # construct path
         vertex_ids_path = []
         pointer = finish_vertex_id
         if finish_vertex_id not in came_from:
-            utils.log('Path not found', 'VeloGraph', 'shortest_path', feedback=self.feedback)
+            self.feedback.pushInfo('Path not found')
             return None
         else:
             while pointer:
@@ -175,42 +141,146 @@ class VeloGraph:
                 pointer = came_from[pointer]
             return vertex_ids_path
     
-    def path_vector(self, vertex_ids_path):
+    def linestring_from_vertex(self, vertex_ids_path):
         pts = [self.network.vertex(i).point() for i in vertex_ids_path]
         line = QgsGeometry.fromPolylineXY(pts)
         return line
+    
+
+        
+    def merge_linestring_layers(self, *layers):
+        merged_layer = QgsVectorLayer('LineString', 'merged_edges', 'memory')
+        merged_layer.setCrs(self.TARGET_CRS)
+        features = []
+        for layer in layers:
+            xform = QgsCoordinateTransform(layer.sourceCrs(), TARGET_CRS, QgsProject.instance())    
+            for feature in layer.getFeatures():
+                xgeom = xform_geometry_4326(feature.geometry(), layer.sourceCrs())
+                feature.setGeometry(xgeom)
+                features.append(feature)
+        provider = merged_layer.dataProvider()
+        provider.addFeatures(features)
+        return merged_layer
+            
         
         
-def iter_nameru_fields(feature):
-    for field in feature.fields():
-        field_name = field.name()
-        if field_name.lower().startswith('nameru'):
-            yield field_name, feature.attribute(field_name)
+    def find_poi_by_name(self, name):
+        for layer in self.poi_layers:
+            for feature in layer.getFeatures():
+                for nameru_name, nameru_value in iter_nameru_fields(feature):
+                    if nameru_value == name:
+                        return layer, feature
         
-def find_feature_by_name(name, layers):
-    for layer in layers:
-        for feature in layer.getFeatures():
-            for nameru_name, nameru_value in iter_nameru_fields(feature):
-                if nameru_value == name:
-                    return layer, feature
-                
-def iter_destination_features(sign_layer, poi_layers, feedback):
-    for sign_feature in sign_layer.getFeatures():
-        utils.log('Process feature ' + str(sign_feature['id']), 'Framework', feedback=feedback)
-        for sign_field_name,sign_field_value in iter_nameru_fields(sign_feature):
-            # utils.log('Proccess attribute '+ sign_field_name, 'Framework', feedback=feedback)
+    def iter_nameru_fields(self, feature):
+        for field in feature.fields():
+            field_name = field.name()
+            if field_name.lower().startswith('nameru'):
+                yield field_name, feature.attribute(field_name)
+        
+    def iter_destination_features(self, sign_feature):
+        self.feedback.pushInfo('Process feature ' + str(sign_feature['id']))
+        for sign_field_name, sign_field_value in self.iter_nameru_fields(sign_feature):
             if not sign_field_value:
-                utils.log('No value for attribute '+ sign_field_name, 'Framework', feedback=feedback)
+                self.feedback.pushInfo('No value for attribute '+ sign_field_name)
             else:
-                # utils.log('Searching for '+ sign_field_value, 'Framework', feedback=feedback)
-                result = find_feature_by_name(sign_field_value, poi_layers)
+                result = self.find_poi_by_name(sign_field_value)
                 if result is None:
-                    utils.log(sign_field_value + ' not found', 'Framework', feedback=feedback)
-                    yield None, None, sign_feature, sign_field_name
+                    self.feedback.pushInfo(sign_field_value + ' not found')
+                    yield sign_field_name, None, None
                 else:
-                    utils.log(sign_field_value + ' founded, calculating shortest path', 'Framework', feedback=feedback)
+                    self.feedback.pushInfo(sign_field_value + ' founded, calculating shortest path')
                     poi_layer, poi_feature = result
-                    yield poi_layer, poi_feature, sign_feature, sign_field_name
+                    yield sign_field_name, poi_layer, poi_feature 
+                        
+                        
+    def extract_sign_direction_and_position(self, field_name):
+        sign_position = field_name[-2]
+        sign_direction = field_name[-1]
+        return sign_position, sign_direction
+        
+    def calculate_path_distance(self, vertex_ids):
+        l = 0
+        for i in range(len(vertex_ids)-1):
+            v1 = vertex_ids[i]
+            v2 = vertex_ids[i+1]
+            l += self.calc_vertex_distance(v1, v2)
+        return l
+    
+    def make_path_feature(self, fid, vertex_ids):
+        fields = QgsFields()
+        fields.append(QgsField('id', QVariant.Int))
+        fields.append(QgsField('length', QVariant.Double))
+        fields.append(QgsField('length_2d', QVariant.Double))
+        fields.append(QgsField('length_3d', QVariant.Double))
+        feature = QgsFeature()
+        feature.setFields(fields)
+        path_line = self.linestring_from_vertex(vertex_ids)
+        feature.setGeometry(path_line)
+        feature['id'] = fid
+        feature['length_3d'] = self.calculate_path_distance(vertex_ids)
+        feature['length_2d'] = self.DISTANCE_CALCULATOR.measureLength(path_line)
+        return feature
+    
+    def set_routecode(self, sign_feature):
+        for f in self.main_roads_layer.getFeatures():
+            
+        return closest_feature[self.ROAD_ROUTECODE_FIELD_NAME]
+        
+    def main(self):
+        # Compute the number of steps to display within the progress bar and
+        # get features from source
+        self.feedback.setProgress(0)
+        total = 100.0 / (self.sign_layer.featureCount()*4) if self.sign_layer.featureCount() else 0
+        
+        fid = 0
+        self.sign_layer.startEditing()
+        for sign_feature in self.sign_layer.getFeatures():
+            sign_feature[self.ROUTECODE_FIELD_NAME] = self.get_routecode(sign_feature)
+            for sign_field_name, poi_layer, poi_feature, in self.iter_destination_features(sign_feature):
+                # если была нажата кнопка cancel - прерываемся
+                if self.feedback.isCanceled():
+                    break
+                # копируе
+                sign_position, sign_direction = self.extract_sign_direction_and_position(sign_field_name)
+                for sign_field_template, poi_field_name in self.FIELD_NAME_TEMPLATES.items():
+                    sign_field_name = sign_field_template.format(sign_position, sign_direction)
+    
+                    if poi_feature is None:
+                        sign_feature[sign_field_name] = 'N/A'
+                    else:
+                        sign_feature[sign_eng_field] = poi_feature[poi_field_name]
+                        
+                        
+                # fill distance field
+                # project points to epsg 4326
+                sign_km_field = 'km_{}{}'.format(sign_position, sign_direction),
+                sign_geom = xform_geometry_4326(sign_feature.geometry(), sign_layer.sourceCrs())
+                poi_geom = xform_geometry_4326(poi_feature.geometry(), poi_layer.sourceCrs())
+                # calc shortest path
+                vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
+                if not vertex_ids:
+                    self.feedback.pushInfo('[processAlgorithm] Cannot build shortest path')
+                    sign_feature[sign_km_field] = 'N/A'
+                else:
+                    self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
+                    # make path feature
+                    path_feature = self.make_path_feature(fid, vertex_ids)
+                    sign_feature[sign_km_field] = self.format_length(path_feature['length_3d'])
+                    yield path_feature
+                    # Update the progress bar
+                    self.feedback.setProgress(int(fid * total))
+                    fid += 1    
+            self.sign_layer.updateFeature(sign_feature)
+        self.sign_layer.commitChanges()
+
+
+    def format_length(self, length):
+        km = length / 1000
+        if km >= 10:
+            formatted_km = str(int(km))
+        else:
+            formatted_km = str(round(km, 1)).replace('.0', '')
+        return formatted_km
 
 # sign_layer = QgsProject.instance().mapLayersByName('123_DIR')[0]
 # transport = QgsProject.instance().mapLayersByName('transport')[0]
