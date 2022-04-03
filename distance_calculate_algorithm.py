@@ -12,6 +12,7 @@ from qgis.core import (
     QgsProcessingParameterMultipleLayers,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterRasterLayer,
     QgsWkbTypes,
     QgsProcessingParameterNumber,
     QgsFields,
@@ -21,7 +22,7 @@ from qgis.core import (
     QgsFeature,
     )
 from qgis.PyQt.QtCore import QVariant
-from .framework import VeloGraph, iter_destination_features, TARGET_CRS, DISTANCE_CALCULATOR
+from .distance_framework import DistanceCalculateFramework
 
 
 class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
@@ -34,8 +35,10 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
 
     PATHS_OUTPUT = 'PATHS_OUTPUT'
     SIGN_INPUT = 'SIGN_INPUT'
-    ROADS_INPUT = 'ROADS_INPUT'
+    MAIN_ROAD_INPUT = 'MAIN_ROAD_INPUT'
+    SECONDARY_ROAD_INPUT = 'SECONDARY_ROAD_INPUT'
     POIS_INPUT = 'POIS_INPUT'
+    HEIGHTS_INPUT = 'HEIGHTS_INPUT'
     TOLERANCE = 'TOLERANCE'
 
     def initAlgorithm(self, config):
@@ -58,10 +61,24 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
             )
         )        
         self.addParameter(
-            QgsProcessingParameterMultipleLayers(
-                self.ROADS_INPUT,
-                self.tr('Слои с дорогами'),
+            QgsProcessingParameterMapLayer(
+                self.MAIN_ROAD_INPUT,
+                self.tr('Слои с главной дорогой'),
                 QgsProcessing.TypeVectorLine
+            )
+        )    
+        self.addParameter(
+            QgsProcessingParameterMapLayer(
+                self.SECONDARY_ROAD_INPUT,
+                self.tr('Слои с доп дорогами'),
+                QgsProcessing.TypeVectorLine
+            )
+        )    
+        self.addParameter(
+            QgsProcessingParameterRasterLayer(
+                self.HEIGHTS_INPUT,
+                self.tr('Слои с высотами'),
+                optional=True,
             )
         )    
         self.addParameter(
@@ -88,17 +105,28 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         Here is where the processing itself takes place.
         """
         sign_layer = self.parameterAsLayer(parameters, self.SIGN_INPUT, context)
-        roads_layers = self.parameterAsLayerList(parameters, self.ROADS_INPUT, context)
+        main_road_layer = self.parameterAsLayer(parameters, self.MAIN_ROAD_INPUT, context)
+        secondary_road_layer = self.parameterAsLayer(parameters, self.SECONDARY_ROAD_INPUT, context)
         poi_layers = self.parameterAsLayerList(parameters, self.POIS_INPUT, context)
+        height_layer = self.parameterAsRasterLayer(parameters, self.HEIGHTS_INPUT, context)
         tolerance = self.parameterAsDouble(parameters, self.TOLERANCE, context)
         
-        
-        
+        framework = DistanceCalculateFramework(
+            sign_layer, 
+            poi_layers, 
+            main_road_layer, 
+            secondary_road_layer, 
+            height_layer, 
+            tolerance,
+            feedback
+            )
         
         path_sink, path_dest_id = self.parameterAsSink(parameters, self.PATHS_OUTPUT,
-                context, path_fields, QgsWkbTypes.LineString, TARGET_CRS)
-
-path_sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+                context, framework.output_fields, QgsWkbTypes.LineString, framework.TARGET_CRS)
+        
+        for path_feature in framework.main():
+            path_sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
+        return {self.PATHS_OUTPUT: path_dest_id}
         
     
 

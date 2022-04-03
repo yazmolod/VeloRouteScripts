@@ -10,7 +10,13 @@ from qgis.core import (
     QgsLineString,
     QgsVectorLayer,
     QgsFeature,
+    QgsSpatialIndex,
     QgsGeometry,
+    QgsRaster,
+    QgsFields,
+    QgsFeatureRequest,
+    QgsField,
+    
     )
 from qgis.analysis import (
     QgsVectorLayerDirector,
@@ -20,7 +26,7 @@ from qgis.analysis import (
 from qgis.PyQt.QtCore import QVariant
 from queue import PriorityQueue
 from itertools import chain
-from utils import xform_geometry_4326
+from .utils import *
 from math import hypot
 
 
@@ -37,25 +43,33 @@ class DistanceCalculateFramework:
     DISTANCE_CALCULATOR = QgsDistanceArea()
     DISTANCE_CALCULATOR.setEllipsoid('WGS84')
     
-    def __init__(self, sign_layer, poi_layers, main_roads_layer, secondary_roads_layer, height_map, feedback):
+    def __init__(self, sign_layer, poi_layers, main_roads_layer, secondary_roads_layer, height_map, graph_tolerance, feedback):
         self.feedback = feedback
         self.sign_layer = sign_layer
         self.poi_layers = poi_layers
         self.main_roads_layer = main_roads_layer
         self.secondary_roads_layer = secondary_roads_layer
-        self.height_provider = height_map.dataProvider()
+        self.graph_tolerance = graph_tolerance
+        self.height_provider = height_map.dataProvider() if height_map else None
+        self.main_road_spatial = QgsSpatialIndex(self.main_roads_layer.getFeatures())
+        self.init_output_fields()
         self.build_graph()
     
+    def init_output_fields(self):
+        self.output_fields = QgsFields()
+        self.output_fields.append(QgsField('id', QVariant.Int))
+        self.output_fields.append(QgsField('length_2d', QVariant.Double))
+        self.output_fields.append(QgsField('length_3d', QVariant.Double))
     
     def build_graph(self):
         # collect all points and transform them
         additional_points = []
         for layer in [self.sign_layer] + self.poi_layers:
             for feature in layer.getFeatures():
-                geom = xform_geometry_4326(feature.geometry(), layer.source_crs())
+                geom = xform_geometry_4326(feature.geometry(), layer.sourceCrs())
                 additional_points.append(geom.asPoint())
         # build graph
-        paths = self.merge_linestring_layers(main_roads_layer, secondary_roads_layer)
+        paths = self.merge_linestring_layers(self.main_roads_layer, self.secondary_roads_layer)
         director = QgsVectorLayerDirector(
             paths, 
             directionFieldId = -1, 
@@ -67,7 +81,7 @@ class DistanceCalculateFramework:
         director.addStrategy(QgsNetworkDistanceStrategy())
         builder = QgsGraphBuilder(self.TARGET_CRS, True, self.graph_tolerance)
         tied_points_list = director.makeGraph(builder, additional_points, self.feedback)
-        self.feedback.pushInfo('Graph init...', 'VeloGraph')
+        self.feedback.pushInfo('Graph init...')
         self.network = builder.graph()
         # make tied edges
         for add_pt, tied_pt in zip(additional_points, tied_points_list):
@@ -78,7 +92,7 @@ class DistanceCalculateFramework:
 
     def calc_vertex_distance(self, from_vertex_id: int, to_vertex_id: int):
         pt1 = self.network.vertex(from_vertex_id).point()
-        pt2 = self.network.vertex(from_vertex_id).point()
+        pt2 = self.network.vertex(to_vertex_id).point()
         l = self.DISTANCE_CALCULATOR.measureLine(pt1, pt2)
         h = abs(self.get_elevation_at_point(pt1) - self.get_elevation_at_point(pt2))
         return hypot(l,h)
@@ -97,7 +111,7 @@ class DistanceCalculateFramework:
         if self.height_provider:
             res = self.height_provider.identify(pt, QgsRaster.IdentifyFormatValue)
             if res:
-                return res[1]
+                return res.results()[1]
         return 0
 
     
@@ -153,7 +167,7 @@ class DistanceCalculateFramework:
         merged_layer.setCrs(self.TARGET_CRS)
         features = []
         for layer in layers:
-            xform = QgsCoordinateTransform(layer.sourceCrs(), TARGET_CRS, QgsProject.instance())    
+            xform = QgsCoordinateTransform(layer.sourceCrs(), self.TARGET_CRS, QgsProject.instance())    
             for feature in layer.getFeatures():
                 xgeom = xform_geometry_4326(feature.geometry(), layer.sourceCrs())
                 feature.setGeometry(xgeom)
@@ -167,7 +181,7 @@ class DistanceCalculateFramework:
     def find_poi_by_name(self, name):
         for layer in self.poi_layers:
             for feature in layer.getFeatures():
-                for nameru_name, nameru_value in iter_nameru_fields(feature):
+                for nameru_name, nameru_value in self.iter_nameru_fields(feature):
                     if nameru_value == name:
                         return layer, feature
         
@@ -207,13 +221,8 @@ class DistanceCalculateFramework:
         return l
     
     def make_path_feature(self, fid, vertex_ids):
-        fields = QgsFields()
-        fields.append(QgsField('id', QVariant.Int))
-        fields.append(QgsField('length', QVariant.Double))
-        fields.append(QgsField('length_2d', QVariant.Double))
-        fields.append(QgsField('length_3d', QVariant.Double))
         feature = QgsFeature()
-        feature.setFields(fields)
+        feature.setFields(self.output_fields)
         path_line = self.linestring_from_vertex(vertex_ids)
         feature.setGeometry(path_line)
         feature['id'] = fid
@@ -221,10 +230,14 @@ class DistanceCalculateFramework:
         feature['length_2d'] = self.DISTANCE_CALCULATOR.measureLength(path_line)
         return feature
     
-    def set_routecode(self, sign_feature):
-        for f in self.main_roads_layer.getFeatures():
-            
-        return closest_feature[self.ROAD_ROUTECODE_FIELD_NAME]
+    def get_closest_road(self, sign_feature):
+        geom = xform_geometry(sign_feature.geometry(), self.sign_layer.sourceCrs(), self.main_roads_layer.sourceCrs())        
+        nearest_ids = self.main_road_spatial.nearestNeighbor(geom.asPoint(), 1)
+        for nearest_id in nearest_ids:
+            features = self.main_roads_layer.getFeatures(QgsFeatureRequest(nearest_id))
+            for f in features:
+                return f
+        
         
     def main(self):
         # Compute the number of steps to display within the progress bar and
@@ -235,7 +248,7 @@ class DistanceCalculateFramework:
         fid = 0
         self.sign_layer.startEditing()
         for sign_feature in self.sign_layer.getFeatures():
-            sign_feature[self.ROUTECODE_FIELD_NAME] = self.get_routecode(sign_feature)
+            sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = self.get_closest_road(sign_feature)[self.ROAD_ROUTECODE_FIELD_NAME]
             for sign_field_name, poi_layer, poi_feature, in self.iter_destination_features(sign_feature):
                 # если была нажата кнопка cancel - прерываемся
                 if self.feedback.isCanceled():
@@ -243,33 +256,34 @@ class DistanceCalculateFramework:
                 # копируе
                 sign_position, sign_direction = self.extract_sign_direction_and_position(sign_field_name)
                 for sign_field_template, poi_field_name in self.FIELD_NAME_TEMPLATES.items():
-                    sign_field_name = sign_field_template.format(sign_position, sign_direction)
-    
+                    sign_field_name = sign_field_template.format(sign_position, sign_direction)    
                     if poi_feature is None:
                         sign_feature[sign_field_name] = 'N/A'
                     else:
-                        sign_feature[sign_eng_field] = poi_feature[poi_field_name]
+                        sign_feature[sign_field_name] = poi_feature[poi_field_name]
                         
-                        
-                # fill distance field
-                # project points to epsg 4326
-                sign_km_field = 'km_{}{}'.format(sign_position, sign_direction),
-                sign_geom = xform_geometry_4326(sign_feature.geometry(), sign_layer.sourceCrs())
-                poi_geom = xform_geometry_4326(poi_feature.geometry(), poi_layer.sourceCrs())
-                # calc shortest path
-                vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
-                if not vertex_ids:
-                    self.feedback.pushInfo('[processAlgorithm] Cannot build shortest path')
-                    sign_feature[sign_km_field] = 'N/A'
-                else:
-                    self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
-                    # make path feature
-                    path_feature = self.make_path_feature(fid, vertex_ids)
-                    sign_feature[sign_km_field] = self.format_length(path_feature['length_3d'])
-                    yield path_feature
-                    # Update the progress bar
-                    self.feedback.setProgress(int(fid * total))
-                    fid += 1    
+                if poi_feature:   
+                    # fill distance field
+                    # project points to epsg 4326
+                    sign_km_field = 'km_{}{}'.format(sign_position, sign_direction)
+                    sign_geom = xform_geometry_4326(sign_feature.geometry(), self.sign_layer.sourceCrs())
+                    poi_geom = xform_geometry_4326(poi_feature.geometry(), poi_layer.sourceCrs())
+                    # calc shortest path
+                    vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
+                    if not vertex_ids:
+                        self.feedback.pushInfo('[processAlgorithm] Cannot build shortest path')
+                        sign_feature[sign_km_field] = 'N/A'
+                    else:
+                        self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
+                        # make path feature
+                        path_feature = self.make_path_feature(fid, vertex_ids)
+                        path_length_formatted = self.format_length(path_feature['length_3d'])
+                        self.feedback.pushInfo(str(sign_km_field))
+                        sign_feature[sign_km_field] = path_length_formatted
+                        yield path_feature
+                # Update the progress bar
+                self.feedback.setProgress(int(fid * total))
+                fid += 1    
             self.sign_layer.updateFeature(sign_feature)
         self.sign_layer.commitChanges()
 
@@ -288,37 +302,23 @@ class DistanceCalculateFramework:
 # services = QgsProject.instance().mapLayersByName('services')[0]
 # locality = QgsProject.instance().mapLayersByName('locality')[0]
 # poi_layers = [transport, poi, services, locality]
-
-# first = QgsProject.instance().mapLayersByName('main_route')[0]   
-# second = QgsProject.instance().mapLayersByName('secondary_routes')[0]   
-# third = QgsProject.instance().mapLayersByName('test route')[0]
-# roads = [first, second, third]
-
-# graph = VeloGraph(roads, [sign_layer]+poi_layers)
-# sign_feature = next(sign_layer.getFeatures())
-
-# layer = QgsVectorLayer('LineString', 'paths', 'memory')
-# fields = QgsFields()
-# fields.append(QgsField('id', QVariant.Int))
-# fields.append(QgsField('from', QVariant.String))
-# fields.append(QgsField('to', QVariant.String))
-# fields.append(QgsField('length', QVariant.Double))
-# features = []
-# fid = 0
-# for poi_feature, path_line in iter_destination_paths(sign_feature, poi_layers):
-#     feature = QgsFeature()
-#     feature.setGeometry(path_line)
-#     feature.setFields(fields)
-#     feature['id'] = fid
-#     feature['from'] = sign_feature['Name']
-#     feature['to'] = poi_feature['NameRU']
-#     feature['length'] = DISTANCE_CALCULATOR.measureLength(path_line)
-#     features.append(feature)
-#     fid += 1
-# provider = layer.dataProvider()
-# provider.addFeatures(features)
-# provider.addAttributes(fields)
-# QgsProject.instance().addMapLayer(layer)
+#
+# height_layer = QgsProject.instance().mapLayersByName('heights')[0]
+#
+# main_road_layer = QgsProject.instance().mapLayersByName('main_route')[0]   
+# secondary_road_layer = QgsProject.instance().mapLayersByName('secondary_routes')[0]   
+# tolerance = 0
+#
+#
+# framework = DistanceCalculateFramework(
+#             sign_layer, 
+#             poi_layers, 
+#             main_road_layer, 
+#             secondary_road_layer, 
+#             height_layer, 
+#             tolerance,
+#             FeedbackImitator()
+#             )
 
 
                 
