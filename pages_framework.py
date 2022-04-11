@@ -1,52 +1,78 @@
 from pathlib import Path
 from datetime import datetime
-from qgis._core import QgsRectangle
-from utils import FeedbackImitator, xform_geometry
+from qgis._core import (
+    QgsRectangle,
+    QgsProject,
+    QgsLayoutExporter,
+    QgsGeometry,
+    QgsPointXY,
+    QgsCoordinateReferenceSystem
+    )
+from .utils import FeedbackImitator, xform_geometry, get_main_road_layer
 
 
 
 class PageGeneratorFramework:
     
+    nonprint_table_columns = ['id', 'Num', 'type', 'routcode', 'degree']
+    
     id_field = 'id'
-    coords_label_id = 'COORDS_LABEL'
-    page_label_id = 'PAGE_LABEL'
-    wf_types_folder = 'wf_type_previews'
-    layout_template_name = 'test'
-    main_map_id = 'Map 1'
-    general_map_id = 'Map 2'
-    pic_id = 'wf_type'
     feature_route_code_field = 'routcode'
     road_route_code_field = 'CODE'
-    table_id = 'data_table'
-    nonprint_columns = ['id', 'Num', 'type',]
     
-    def __init__(self):
+    
+    def __init__(self, 
+                export_layers, 
+                export_route_codes,
+                layout_name, 
+                feedback,
+                wf_types_folder,
+                coords_label_id,
+                page_label_id,
+                place_map_id,
+                general_map_id,
+                data_table_id,
+                wf_pic_id
+                ):
         self.project = QgsProject.instance()
         self.lay_mng = self.project.layoutManager()
-        self.layout = self.lay_mng.layoutByName(self.layout_template_name)
-        self.layers = self.project.mapLayersByName('123_DIR') + self.project.mapLayersByName('201_SIGN') 
+        self.layout = self.lay_mng.layoutByName(layout_name)
+        self.layers = export_layers
+        self.route_codes = export_route_codes
         self.current_feature = None
         self.current_layer = None
         self.current_page = None
-        self.feedback = FeedbackImitator()
-        self.road_layer = self.project.mapLayersByName('main_route_UTF-8')[0]
+        self.current_routecode = None
+        self.feedback = feedback
+        self.road_layer = get_main_road_layer()
         self.general_map_margin = 0.05
+        self.wf_types_folder = wf_types_folder
+        # items which we modify
+        self.coords_label_id = coords_label_id
+        self.page_label_id = page_label_id
+        self.place_map_id = place_map_id
+        self.general_map_id = general_map_id
+        self.data_table_id = data_table_id
+        self.wf_pic_id = wf_pic_id
 
     def export(self, folder):
         filepath = folder / ('%05d.pdf' % self.current_page)
         settings = QgsLayoutExporter.PdfExportSettings()
         exporter = QgsLayoutExporter(self.layout)
         status = exporter.exportToPdf(str(filepath), settings)
-        self.feedback.pushInfo(f'[] File {filepath} saved')
+        self.feedback.pushInfo(f'File {filepath} saved')
     
     def generate_export_folder(self):
         project_folder = Path(self.project.homePath())
-        layout_folder = project_folder / 'pdf' / datetime.now().strftime('%d%m%Y_%H-%M')
+        layout_folder = project_folder / 'pdf' / '{}_{}'.format(
+            self.current_routecode, 
+            datetime.now().strftime('%d%m%Y_%H-%M')
+            )
         layout_folder.mkdir(parents=True, exist_ok=True)
         return layout_folder
   
     def recenter_main_map(self):
-        map_item = self.layout.itemById(self.main_map_id)
+        map_item = self.layout.itemById(self.place_map_id)
         map_scale = map_item.scale()
         map_crs = map_item.crs()
         pt = self.get_transformed_current_point(map_crs)
@@ -93,7 +119,7 @@ class PageGeneratorFramework:
             return result_bbox.xMinimum(), result_bbox.yMinimum(), result_bbox.xMaximum(), result_bbox.yMaximum()
         
     def change_picture(self):
-        pic_item = self.layout.itemById(self.pic_id)
+        pic_item = self.layout.itemById(self.wf_pic_id)
         pic_path = Path(pic_item.picturePath())
         if pic_path.stem != self.current_layer.name():
             new_path = pic_path.parent / (self.current_layer.name() + '.jpg')
@@ -107,11 +133,17 @@ class PageGeneratorFramework:
         self.layout.itemById(self.page_label_id).setText(str(self.current_page))
         self.layout.itemById(self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
         
-    def iter_ordered_features(self, layers):
-        #turn off all layer features
-        for layer in layers:
+    def turn_on_all_features(self):
+        for layer in self.layers:
+            layer.setSubsetString('')
+        
+    def turn_off_all_features(self):
+        for layer in self.layers:
             layer.setSubsetString('{}=-1'.format(self.id_field))
-        for layer in layers:
+        
+        
+    def iter_ordered_features(self):
+        for layer in self.layers:
             #turn on feature in beginning to init features
             layer.setSubsetString('')
             layer_ids = [f[self.id_field] for f in layer.getFeatures()]
@@ -120,9 +152,6 @@ class PageGeneratorFramework:
                 layer.setSubsetString('{}={}'.format(self.id_field, layer_ids[i]))
                 yield layer, feature
             layer.setSubsetString('{}=-1'.format(self.id_field))
-        #turn on all layer features back
-        for layer in layers:
-            layer.setSubsetString('')
                      
     def get_transformed_current_point(self, target_crs):
         geometry = self.current_feature.geometry()
@@ -130,12 +159,12 @@ class PageGeneratorFramework:
         return geometry.asPoint()
         
     def generate_table(self):
-        table_item = self.layout.itemById(self.table_id).multiFrame()
+        table_item = self.layout.itemById(self.data_table_id).multiFrame()
         feature_fields = [i.name() for i in self.current_feature.fields()]
         feature_attributes = self.current_feature.attributes()
         trs = []
         for k,v in zip(feature_fields, feature_attributes):
-            if k not in self.nonprint_columns:
+            if k not in self.nonprint_table_columns:
                 trs.append(f'<tr><th>{k}</th><td>{v}</td></tr>')
         html_table = f'<table>{"".join(trs)}</table>'
         table_item.setHtml(html_table)
@@ -148,22 +177,39 @@ class PageGeneratorFramework:
         self.change_picture()
         self.generate_table()
         self.update_labels()
+        
+    def generate_id(self):
+        self.turn_on_all_features()
+        for layer in self.layers:
+            layer.startEditing()
+            for i,feature in enumerate(layer.getFeatures()):
+                feature[self.id_field] = i
+            layer.commitChanges()
                 
 
     def main(self):
-        folder = self.generate_export_folder()    
+        self.generate_id()         
         self.current_page = 1    
-        for layer, feature in self.iter_ordered_features(layers):
-            self.current_feature = feature
-            self.current_layer = layer
-            self.update_layout()
-            self.export(folder)
-            self.current_page += 1
+        self.feedback.setProgress(0)
+        total=100
+        for route_code in self.route_codes:
+            self.current_routecode = route_code
+            folder = self.generate_export_folder()
+            for layer, feature in self.iter_ordered_features():
+                try:
+                    self.current_feature = feature
+                    self.current_layer = layer
+                    self.update_layout()
+                    self.export(folder)
+                    self.current_page += 1
+                    self.feedback.setProgress(int(self.current_page / total * 100))
+                except Exception as e:
+                    self.feedback.reportError(str(e))
     
     
-x = PageGeneratorFramework()
-x.current_layer = iface.activeLayer()
-x.current_feature = next(x.current_layer.getFeatures())
-x.update_layout()
+# x = PageGeneratorFramework()
+# x.current_layer = iface.activeLayer()
+# x.current_feature = next(x.current_layer.getFeatures())
+# x.update_layout()
 #x.main()
 

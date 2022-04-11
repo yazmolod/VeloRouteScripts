@@ -184,6 +184,7 @@ class DistanceCalculateFramework:
                 for nameru_name, nameru_value in self.iter_nameru_fields(feature):
                     if nameru_value == name:
                         return layer, feature
+                    
         
     def iter_nameru_fields(self, feature):
         for field in feature.fields():
