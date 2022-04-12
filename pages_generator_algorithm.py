@@ -140,7 +140,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         try:
             framework.main()
         except Exception as e:
-                feedback.reportError(str(e))
+            feedback.reportError(str(e))
         return {}
 
     def name(self):
