@@ -124,7 +124,8 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         path_sink, path_dest_id = self.parameterAsSink(parameters, self.PATHS_OUTPUT,
                 context, framework.output_fields, QgsWkbTypes.LineString, framework.TARGET_CRS)
         
-        for path_feature in framework.main():
+        for i, path_feature in enumerate(framework.main()):
+            path_feature['id'] = i
             path_sink.addFeature(path_feature, QgsFeatureSink.FastInsert)
         return {self.PATHS_OUTPUT: path_dest_id}
         

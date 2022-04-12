@@ -161,11 +161,7 @@ class PageGeneratorFramework:
                      
     def get_transformed_current_point(self, target_crs):
         geometry = self.current_feature.geometry()
-        # да, тут действительно берем crs от дороги
-        # а не от текущего слоя, т.к. когда мы сортировали
-        # фичерсы, то там уже приводили crs и обновили геометрию
-        # не дело это конечно, но пока оставил
-        geometry = xform_geometry(geometry, self.road_layer.sourceCrs(), target_crs)
+        geometry = xform_geometry(geometry, self.current_layer.sourceCrs(), target_crs)
         return geometry.asPoint()
         
     def generate_table(self):
@@ -201,8 +197,6 @@ class PageGeneratorFramework:
     def main(self):
         self.generate_id()         
         self.current_page = 1    
-        self.feedback.setProgress(0)
-        total=100
         folder = self.generate_export_folder()
         for layer, feature in self.iter_ordered_features():
             self.current_feature = feature
@@ -210,7 +204,6 @@ class PageGeneratorFramework:
             self.update_layout()
             self.export(folder)
             self.current_page += 1
-            self.feedback.setProgress(self.current_page / total * 100)
     
     
 # x = PageGeneratorFramework()

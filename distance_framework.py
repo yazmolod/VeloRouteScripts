@@ -16,7 +16,7 @@ from qgis.core import (
     QgsFields,
     QgsFeatureRequest,
     QgsField,
-    
+    NULL    
     )
 from qgis.analysis import (
     QgsVectorLayerDirector,
@@ -25,18 +25,17 @@ from qgis.analysis import (
     )
 from qgis.PyQt.QtCore import QVariant
 from queue import PriorityQueue
-from itertools import chain
+from itertools import chain, product
 from .utils import *
 from math import hypot
 
 
-
 class DistanceCalculateFramework:
+    NAMERU_FIELD = 'NameRU'
+    PIC_FIELD = 'PIC'
+    NAMEEN_FIELD = 'NameEN'
+    KM_FIELD = 'km'
     TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
-    FIELD_NAME_TEMPLATES = {
-        'NameEN{}{}':'NameEN',
-        'PIC_{}{}':'pic',
-        }
     
     SIGN_ROUTECODE_FIELD_NAME = 'routcode'
     ROAD_ROUTECODE_FIELD_NAME = 'CODE'
@@ -54,12 +53,14 @@ class DistanceCalculateFramework:
         self.main_road_spatial = QgsSpatialIndex(self.main_roads_layer.getFeatures())
         self.init_output_fields()
         self.build_graph()
+        self.current_direction = None
     
     def init_output_fields(self):
         self.output_fields = QgsFields()
         self.output_fields.append(QgsField('id', QVariant.Int))
         self.output_fields.append(QgsField('length_2d', QVariant.Double))
         self.output_fields.append(QgsField('length_3d', QVariant.Double))
+        self.output_fields.append(QgsField('direction', QVariant.String))
     
     def build_graph(self):
         # collect all points and transform them
@@ -114,7 +115,6 @@ class DistanceCalculateFramework:
                 return res.results()[1]
         return 0
 
-    
     def shortest_path(self, from_geometry: QgsPointXY, to_geometry: QgsPointXY):
         start_vertex_id = self.network.findVertex(from_geometry)
         finish_vertex_id = self.network.findVertex(to_geometry)
@@ -160,7 +160,6 @@ class DistanceCalculateFramework:
         line = QgsGeometry.fromPolylineXY(pts)
         return line
     
-
         
     def merge_linestring_layers(self, *layers):
         merged_layer = QgsVectorLayer('LineString', 'merged_edges', 'memory')
@@ -175,43 +174,28 @@ class DistanceCalculateFramework:
         provider = merged_layer.dataProvider()
         provider.addFeatures(features)
         return merged_layer
-            
-        
         
     def find_poi_by_name(self, name):
+        for layer, feature in self.iter_pois_by_name(name):
+            return layer, feature
+        else:
+            return None, None
+    
+    def iter_pois_by_name(self, name):
         for layer in self.poi_layers:
             for feature in layer.getFeatures():
-                for nameru_name, nameru_value in self.iter_nameru_fields(feature):
-                    if nameru_value == name:
-                        return layer, feature
-                    
+                if self.feature_has_field(feature, self.NAMERU_FIELD) and feature[self.NAMERU_FIELD] == name:
+                    yield layer, feature
+                                 
         
-    def iter_nameru_fields(self, feature):
-        for field in feature.fields():
-            field_name = field.name()
-            if field_name.lower().startswith('nameru'):
-                yield field_name, feature.attribute(field_name)
-        
-    def iter_destination_features(self, sign_feature):
-        self.feedback.pushInfo('Process feature ' + str(sign_feature['id']))
-        for sign_field_name, sign_field_value in self.iter_nameru_fields(sign_feature):
-            if not sign_field_value:
-                self.feedback.pushInfo('No value for attribute '+ sign_field_name)
-            else:
-                result = self.find_poi_by_name(sign_field_value)
-                if result is None:
-                    self.feedback.pushInfo(sign_field_value + ' not found')
-                    yield sign_field_name, None, None
-                else:
-                    self.feedback.pushInfo(sign_field_value + ' founded, calculating shortest path')
-                    poi_layer, poi_feature = result
-                    yield sign_field_name, poi_layer, poi_feature 
-                        
-                        
-    def extract_sign_direction_and_position(self, field_name):
-        sign_position = field_name[-2]
-        sign_direction = field_name[-1]
-        return sign_position, sign_direction
+    def iter_directions(self):
+        nums = range(1,5)
+        dirs = ['A', 'B']
+        for i in product(nums, dirs):
+            direction = ''.join(map(str, i))
+            self.current_direction = direction
+            yield direction
+                                                    
         
     def calculate_path_distance(self, vertex_ids):
         l = 0
@@ -221,14 +205,14 @@ class DistanceCalculateFramework:
             l += self.calc_vertex_distance(v1, v2)
         return l
     
-    def make_path_feature(self, fid, vertex_ids):
+    def make_path_feature(self, vertex_ids):
         feature = QgsFeature()
         feature.setFields(self.output_fields)
         path_line = self.linestring_from_vertex(vertex_ids)
         feature.setGeometry(path_line)
-        feature['id'] = fid
         feature['length_3d'] = self.calculate_path_distance(vertex_ids)
         feature['length_2d'] = self.DISTANCE_CALCULATOR.measureLength(path_line)
+        feature['direction'] = self.current_direction
         return feature
     
     def get_closest_road(self, sign_feature):
@@ -238,53 +222,110 @@ class DistanceCalculateFramework:
             features = self.main_roads_layer.getFeatures(QgsFeatureRequest(nearest_id))
             for f in features:
                 return f
+            
+    def feature_has_field(self, feature, fieldname):
+        return fieldname in [i.name() for i in feature.fields()]
+    
+    def feature_has_fields(self, feature, *fieldnames):
+        return all(self.feature_has_field(feature, i) for i in fieldnames)
+            
+    def is_service(self, feature, direction):
+        pic_field = '{}_{}'.format(self.PIC_FIELD, direction)
+        nameru_field = '{}{}'.format(self.NAMERU_FIELD, direction)
+        if self.feature_has_fields(feature, pic_field, nameru_field):
+            if feature[pic_field] != NULL and feature[pic_field] != 'N/A' and feature[nameru_field] == NULL:
+                return True   #TODO             
+        return False
+        
+    def get_shortest_path_feature(self, sign_feature, poi_layer, poi_feature):
+        sign_geom = xform_geometry_4326(sign_feature.geometry(), self.sign_layer.sourceCrs())
+        poi_geom = xform_geometry_4326(poi_feature.geometry(), poi_layer.sourceCrs())
+        # calc shortest path
+        vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
+        if not vertex_ids:
+            self.feedback.reportError('[processAlgorithm] Cannot build shortest path')
+            return None
+        else:
+            # self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
+            # make path feature
+            path_feature = self.make_path_feature(vertex_ids)
+            return path_feature
+        
+        
+    def find_closest_service(self, sign_feature, service_name):
+        reversed = self.current_direction[0] == 'B' 
+        ok_service_layer = ok_service_feature = None
+        min_distance = None
+        sign_geom = sign_feature.geometry()
+        for service_layer, service_feature in self.iter_pois_by_name(service_name):
+            service_geom = xform_geometry(service_feature.geometry(), service_layer.sourceCrs(), self.sign_layer.sourceCrs())   
+            diff = service_geom.asPoint() - sign_geom.asPoint()
+            if True:    # тут должна быть проверка на направление
+                if min_distance is None or diff.length() < min_distance:
+                    min_distance = diff.length()
+                    ok_service_layer, ok_service_feature = service_layer, service_feature
+        return ok_service_layer, ok_service_feature
+    
+    def check_distance_beetween_services(self, service_features):
+        # TODO
+        return True
         
         
     def main(self):
         # Compute the number of steps to display within the progress bar and
         # get features from source
         self.feedback.setProgress(0)
-        total = 100.0 / (self.sign_layer.featureCount()*4) if self.sign_layer.featureCount() else 0
-        
-        fid = 0
+        total = 100.0 / (self.sign_layer.featureCount()*8) if self.sign_layer.featureCount() else 0        
+        counter = 1
         self.sign_layer.startEditing()
         for sign_feature in self.sign_layer.getFeatures():
+            # если была нажата кнопка cancel - прерываемся
+            if self.feedback.isCanceled():
+                break
+            # general feature fields
             sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = self.get_closest_road(sign_feature)[self.ROAD_ROUTECODE_FIELD_NAME]
-            for sign_field_name, poi_layer, poi_feature, in self.iter_destination_features(sign_feature):
-                # если была нажата кнопка cancel - прерываемся
-                if self.feedback.isCanceled():
-                    break
-                # копируе
-                sign_position, sign_direction = self.extract_sign_direction_and_position(sign_field_name)
-                for sign_field_template, poi_field_name in self.FIELD_NAME_TEMPLATES.items():
-                    sign_field_name = sign_field_template.format(sign_position, sign_direction)    
+            # iter all direction fields
+            for direction in self.iter_directions():
+                if self.is_service(sign_feature, direction):
+                    service_paths = []
+                    service_features = []
+                    # find shortest path for every service
+                    service_names = sign_feature[self.PIC_FIELD + '_' + direction].split(' ')
+                    for service_name in service_names:
+                        service_layer, service_feature = self.find_closest_service(sign_feature, service_name)
+                        if service_feature:
+                            path_feature = self.get_shortest_path_feature(sign_feature, service_layer, service_feature)
+                            service_paths.append(path_feature)
+                            service_features.append(service_feature)
+                        else:
+                            self.feedback.pushInfo(f"Can't find service {service_name}")
+                            
+                    # all paths find and all shortest than 100 meters
+                    if service_paths and self.check_distance_beetween_services(service_features):
+                        closest_service_path = min(service_paths, key=lambda x: x['length_3d'])
+                        sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(closest_service_path['length_3d'])
+                        yield closest_service_path
+                    else:
+                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'    
+                else:
+                    # direction feature fields
+                    poi_layer, poi_feature = self.find_poi_by_name(sign_feature[self.NAMERU_FIELD + direction])
                     if poi_feature is None:
-                        sign_feature[sign_field_name] = 'N/A'
+                        sign_feature[self.PIC_FIELD + '_' + direction] = 'N/A'
+                        sign_feature[self.NAMEEN_FIELD + direction] = 'N/A'
+                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
                     else:
-                        sign_feature[sign_field_name] = poi_feature[poi_field_name]
-                        
-                if poi_feature:   
-                    # fill distance field
-                    # project points to epsg 4326
-                    sign_km_field = 'km_{}{}'.format(sign_position, sign_direction)
-                    sign_geom = xform_geometry_4326(sign_feature.geometry(), self.sign_layer.sourceCrs())
-                    poi_geom = xform_geometry_4326(poi_feature.geometry(), poi_layer.sourceCrs())
-                    # calc shortest path
-                    vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
-                    if not vertex_ids:
-                        self.feedback.pushInfo('[processAlgorithm] Cannot build shortest path')
-                        sign_feature[sign_km_field] = 'N/A'
-                    else:
-                        self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
-                        # make path feature
-                        path_feature = self.make_path_feature(fid, vertex_ids)
-                        path_length_formatted = self.format_length(path_feature['length_3d'])
-                        self.feedback.pushInfo(str(sign_km_field))
-                        sign_feature[sign_km_field] = path_length_formatted
-                        yield path_feature
+                        sign_feature[self.PIC_FIELD + '_' + direction] = poi_feature[self.PIC_FIELD.lower()]
+                        sign_feature[self.NAMEEN_FIELD + direction] = poi_feature[self.NAMEEN_FIELD]
+                        path_feature = self.get_shortest_path_feature(sign_feature, poi_layer, poi_feature)
+                        if path_feature:
+                            sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(path_feature['length_3d'])
+                            yield path_feature
+                        else:
+                            sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'              
                 # Update the progress bar
-                self.feedback.setProgress(int(fid * total))
-                fid += 1    
+                self.feedback.setProgress(counter / total * 100)
+                counter += 1    
             self.sign_layer.updateFeature(sign_feature)
         self.sign_layer.commitChanges()
 
