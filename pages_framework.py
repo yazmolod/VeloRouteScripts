@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from pathlib import Path
 from datetime import datetime
 from qgis._core import (
@@ -8,7 +9,7 @@ from qgis._core import (
     QgsPointXY,
     QgsCoordinateReferenceSystem
     )
-from .utils import *
+from VeloRouteScripts.utils import *
 
 
 
@@ -29,6 +30,7 @@ class PageGeneratorFramework:
                 wf_types_folder,
                 coords_label_id,
                 page_label_id,
+                route_label_id,
                 place_map_id,
                 general_map_id,
                 data_table_id,
@@ -50,17 +52,25 @@ class PageGeneratorFramework:
         # items which we modify
         self.coords_label_id = coords_label_id
         self.page_label_id = page_label_id
+        self.route_label_id = route_label_id
         self.place_map_id = place_map_id
         self.general_map_id = general_map_id
         self.data_table_id = data_table_id
         self.wf_pic_id = wf_pic_id
+        
+    def get_layout_item(self, item_id):
+        item = self.layout.itemById(item_id)
+        if item is None:
+            raise Exception('Item {} was not found'.format(item_id))
+        else:
+            return item
 
     def export(self, folder):
         filepath = folder / ('%05d.pdf' % self.current_page)
+        self.feedback.pushInfo(f'File {filepath} saving...')
         settings = QgsLayoutExporter.PdfExportSettings()
         exporter = QgsLayoutExporter(self.layout)
         status = exporter.exportToPdf(str(filepath), settings)
-        self.feedback.pushInfo(f'File {filepath} saved')
     
     def generate_export_folder(self):
         project_folder = Path(self.project.homePath())
@@ -72,7 +82,7 @@ class PageGeneratorFramework:
   
     def recenter_main_map(self):
         self.feedback.pushInfo('[PagesGenerator] Recenter place map')
-        map_item = self.layout.itemById(self.place_map_id)
+        map_item = self.get_layout_item(self.place_map_id)
         map_scale = map_item.scale()
         map_crs = map_item.crs()
         pt = self.get_transformed_current_point(map_crs)
@@ -82,7 +92,7 @@ class PageGeneratorFramework:
         
     def extent_general_map(self):
         self.feedback.pushInfo('[PagesGenerator] Extent general map')
-        map_item = self.layout.itemById(self.general_map_id)
+        map_item = self.get_layout_item(self.general_map_id)
         map_crs = map_item.crs()
         field_names = [i.name() for i in self.current_feature.fields()]
         if self.feature_route_code_field not in field_names:
@@ -121,7 +131,7 @@ class PageGeneratorFramework:
         
     def change_picture(self):
         self.feedback.pushInfo('[PagesGenerator] Change wf pic')
-        pic_item = self.layout.itemById(self.wf_pic_id)
+        pic_item = self.get_layout_item(self.wf_pic_id)
         pic_path = Path(pic_item.picturePath())
         if pic_path.stem != self.current_layer.name():
             new_path = pic_path.parent / (self.current_layer.name() + '.jpg')
@@ -133,8 +143,9 @@ class PageGeneratorFramework:
     def update_labels(self):
         self.feedback.pushInfo('[PagesGenerator] Update labels')
         pt = self.get_transformed_current_point(QgsCoordinateReferenceSystem("EPSG:4326"))
-        self.layout.itemById(self.page_label_id).setText(str(self.current_page))
-        self.layout.itemById(self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
+        self.get_layout_item(self.page_label_id).setText(str(self.current_page))
+        self.get_layout_item(self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
+        self.get_layout_item(self.route_label_id).setText('%s' % self.current_routecode)
         
     def turn_on_all_features(self):
         for layer in self.layers:
@@ -166,7 +177,7 @@ class PageGeneratorFramework:
         
     def generate_table(self):
         self.feedback.pushInfo('[PagesGenerator] Update data table')
-        table_item = self.layout.itemById(self.data_table_id).multiFrame()
+        table_item = self.get_layout_item(self.data_table_id).multiFrame()
         feature_fields = [i.name() for i in self.current_feature.fields()]
         feature_attributes = self.current_feature.attributes()
         trs = []
@@ -205,10 +216,23 @@ class PageGeneratorFramework:
             self.export(folder)
             self.current_page += 1
     
-    
-# x = PageGeneratorFramework()
-# x.current_layer = iface.activeLayer()
-# x.current_feature = next(x.current_layer.getFeatures())
-# x.update_layout()
-#x.main()
+
+pr = QgsProject.instance()
+l1 = pr.mapLayersByName('123_DIR')[0]
+l2 = pr.mapLayersByName('201_SIGN')[0]
+gen = PageGeneratorFramework(
+    [l1, l2], 
+    ['Y-K', 'H-Z', 'P-M'],
+    'test', 
+    FeedbackImitator(),
+    r"D:\Yandex\YandexDisk\freelance\плагин qgis\QGIS_deploy_prototype_v3\QGIS_deploy_prototype\wf_type_previews",
+    "coords_label_id",
+    "page_label_id",
+    "route_label_id",
+    "place_map_id",
+    "general_map_id",
+    "data_table_id",
+    "wf_pic_id"
+    )
+gen.main()
 

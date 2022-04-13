@@ -99,10 +99,10 @@ class CsvExportAlgorithm(QgsProcessingAlgorithm):
         return 'csv_export'
 
     def displayName(self):
-        return self.tr(self.name())
+        return 'Экспорт CSV'
 
     def group(self):
-        return self.tr(self.groupId())
+        return 'Веломаршрут'
 
     def groupId(self):
         return 'Group1'

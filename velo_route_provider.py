@@ -73,7 +73,7 @@ class VeloRouteProvider(QgsProcessingProvider):
 
         This string should be short (e.g. "Lastools") and localised.
         """
-        return self.tr('VeloRouteScripts')
+        return self.tr(self.id())
 
     def icon(self):
         """

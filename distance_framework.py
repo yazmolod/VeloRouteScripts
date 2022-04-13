@@ -25,7 +25,7 @@ from qgis.analysis import (
     )
 from qgis.PyQt.QtCore import QVariant
 from queue import PriorityQueue
-from itertools import chain, product
+from itertools import chain, product, combinations
 from .utils import *
 from math import hypot
 
@@ -150,7 +150,7 @@ class DistanceCalculateFramework:
             self.feedback.pushInfo('Path not found')
             return None
         else:
-            while pointer:
+            while pointer is not None:
                 vertex_ids_path.append(pointer)
                 pointer = came_from[pointer]
             return vertex_ids_path
@@ -264,10 +264,16 @@ class DistanceCalculateFramework:
                 if min_distance is None or diff.length() < min_distance:
                     min_distance = diff.length()
                     ok_service_layer, ok_service_feature = service_layer, service_feature
-        return ok_service_layer, ok_service_feature
+        if ok_service_feature:
+            return PackedFeature(ok_service_feature, ok_service_layer)
     
-    def check_distance_beetween_services(self, service_features):
-        # TODO
+    def check_distance_beetween_services(self, service_packed_features):
+        for pair in combinations(service_packed_features, 2):
+            pt1 = pair[0].get_4326_geometry().asPoint()
+            pt2 = pair[1].get_4326_geometry().asPoint()
+            distance = self.DISTANCE_CALCULATOR.measureLine(pt1, pt2)
+            if distance > 100:
+                return False
         return True
         
         
@@ -288,25 +294,30 @@ class DistanceCalculateFramework:
             for direction in self.iter_directions():
                 if self.is_service(sign_feature, direction):
                     service_paths = []
-                    service_features = []
+                    service_packed_features = []
                     # find shortest path for every service
                     service_names = sign_feature[self.PIC_FIELD + '_' + direction].split(' ')
                     for service_name in service_names:
-                        service_layer, service_feature = self.find_closest_service(sign_feature, service_name)
-                        if service_feature:
-                            path_feature = self.get_shortest_path_feature(sign_feature, service_layer, service_feature)
+                        service_packed_feature = self.find_closest_service(sign_feature, service_name)
+                        if service_packed_feature:
+                            path_feature = self.get_shortest_path_feature(sign_feature, service_packed_feature.layer, service_packed_feature.feature)
                             service_paths.append(path_feature)
-                            service_features.append(service_feature)
+                            service_packed_features.append(service_packed_feature)
                         else:
                             self.feedback.pushInfo(f"Can't find service {service_name}")
                             
                     # all paths find and all shortest than 100 meters
-                    if service_paths and self.check_distance_beetween_services(service_features):
-                        closest_service_path = min(service_paths, key=lambda x: x['length_3d'])
-                        sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(closest_service_path['length_3d'])
-                        yield closest_service_path
+                    if service_paths:
+                        if self.check_distance_beetween_services(service_packed_features):
+                            closest_service_path = min(service_paths, key=lambda x: x['length_3d'])
+                            sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(closest_service_path['length_3d'])
+                            yield closest_service_path
+                        else:
+                            self.feedback.pushInfo(f"Service distance more than 100 meters")
+                            sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
                     else:
-                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'    
+                        self.feedback.pushInfo(f"No services found")
+                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
                 else:
                     # direction feature fields
                     poi_layer, poi_feature = self.find_poi_by_name(sign_feature[self.NAMERU_FIELD + direction])

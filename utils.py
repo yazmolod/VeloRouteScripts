@@ -48,66 +48,82 @@ def get_main_road_layer():
 
 class FeedbackImitator:
     def pushInfo(self, info):
-        print(info)
+        print('[ERROR]', info)
+        
+    def pushInfo(self, info):
+        print('[INFO]', info)
+        
+    def setProgress(self, v):
+        pass
+        
+class PackedFeature:
+    def __init__(self, feature, layer):
+        self.feature = feature
+        self.layer = layer
+        
+    def get_transformed_geometry(self, target_crs):
+        geometry = self.feature.geometry()
+        xform = QgsCoordinateTransform(self.layer.sourceCrs(), target_crs, QgsProject.instance())
+        geometry.transform(xform)
+        return geometry
+    
+    def get_4326_geometry(self):
+        return self.get_transformed_geometry(QgsCoordinateReferenceSystem("EPSG:4326"))
+    
+    @classmethod
+    def from_layer(cls, layer):
+        return [cls(i, layer) for i in layer.getFeatures()]
         
 ### POINTS SORTING ###
 
-def grouping_points(road_features, point_features):
-    spatial = QgsSpatialIndex(road_features)
+def grouping_points(road_layer, poi_packed_features):
+    spatial = QgsSpatialIndex(road_layer.getFeatures())
     groups = {}
-    for pt_f in point_features:
-        neighbor = spatial.nearestNeighbor(pt_f.geometry().asPoint(), 1)[0]
+    for pt_f in poi_packed_features:
+        neighbor = spatial.nearestNeighbor(pt_f.get_transformed_geometry(road_layer.sourceCrs()).asPoint(), 1)[0]
         group = groups.get(neighbor, [])
         group.append(pt_f)
         groups[neighbor] = group
     return groups
 
-def get_centroid_coords(feature):
-        pt = feature.geometry().centroid()
+def get_centroid_coords(packed_feature):
+        pt = packed_feature.feature.geometry().centroid()
         return -pt.asPoint().x(), pt.asPoint().y()
 
-def sort_road_segments(road_features):
-    return sorted(road_features, key=get_centroid_coords)
-
-def is_road_feature_reversed(road_feature):
-    start_pt = road_feature.geometry().asMultiPolyline()[0][0]
-    end_pt = road_feature.geometry().asMultiPolyline()[0][-1]
+def is_road_feature_reversed(road_packed_feature):
+    start_pt = road_packed_feature.feature.geometry().asMultiPolyline()[0][0]
+    end_pt = road_packed_feature.feature.geometry().asMultiPolyline()[0][-1]
     diff = end_pt - start_pt
     return diff.y() < 0 and diff.x() > 0
 
-def sort_grouped_points(road_feature, point_features):
-    reversed = is_road_feature_reversed(road_feature)
+def sort_grouped_points(road_packed_feature, poi_packed_features):
+    reversed = is_road_feature_reversed(road_packed_feature)
     return sorted(
-        point_features,
-        key=lambda x: road_feature.geometry().lineLocatePoint(x.geometry()),
+        poi_packed_features,
+        key=lambda x: road_packed_feature.feature.geometry().lineLocatePoint(x.get_transformed_geometry(road_packed_feature.layer.sourceCrs())),
         reverse=reversed
         )
 
 def iter_pois_along_road(road_layer, poi_layers, feedback):
-    road_feature_from_id = lambda x: next(road_layer.getFeatures(QgsFeatureRequest(x)))
-    # приводим все объекты к одному crs
-    feedback.pushInfo('[IterAlongRoad] Converting layers crs')
-    poi_features = []
-    for layer in poi_layers:
-        for feature in layer.getFeatures():
-            geom = xform_geometry(feature.geometry(), layer.sourceCrs(), road_layer.sourceCrs())
-            feature.setGeometry(geom)
-            poi_features.append(feature)
-    # группируем точки по ближайшему участку дороги
+    road_packed_feature_from_id = lambda x: PackedFeature(next(road_layer.getFeatures(QgsFeatureRequest(x))), road_layer)
+    poi_packed_features = []
+    for l in poi_layers:
+        poi_packed_features += PackedFeature.from_layer(l)
+    # grouping by closest road
     feedback.pushInfo('[IterAlongRoad] Grouping points')
-    grouping_result = grouping_points(road_layer.getFeatures(), poi_features)
-    # сортируем ключи участков дороги по удаленности центроидов
+    grouping_result = grouping_points(road_layer, poi_packed_features)
+    # sorting roads by centoids
     feedback.pushInfo('[IterAlongRoad] Sorting roads')
     sorted_grouping_keys = sorted(
         grouping_result.keys(), 
-        key=lambda x: get_centroid_coords(road_feature_from_id(x)))
-    # итерируем отсортированные участки дорог
+        key=lambda x: get_centroid_coords(road_packed_feature_from_id(x)))
+    # iter sorted roads
     for road_id in sorted_grouping_keys:
         feedback.pushInfo(f'[IterAlongRoad] Yield points for road {road_id}')
         pt_group = grouping_result[road_id]
-        road_feature = road_feature_from_id(road_id)
-        # также не забываем отсортировать точки по участку
-        pt_group_sorted = sort_grouped_points(road_feature, pt_group)
+        road_packed_feature = road_packed_feature_from_id(road_id)
+        # sort points linked to road
+        pt_group_sorted = sort_grouped_points(road_packed_feature, pt_group)
         for pt_f in pt_group_sorted:
-            yield pt_f
+            yield pt_f.feature
 #    

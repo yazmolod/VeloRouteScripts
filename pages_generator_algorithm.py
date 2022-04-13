@@ -27,6 +27,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
     PARAM_ITEM_PAGE_LABEL = 'PARAM_ITEM_PAGE_LABEL'
     PARAM_ITEM_COORDS_LABEL = 'PARAM_ITEM_COORDS_LABEL'
     PARAM_WF_TYPES_FOLDER = 'PARAM_WF_TYPES_FOLDER'
+    PARAM_ITEM_ROUTE_LABEL = 'PARAM_ITEM_ROUTE_LABEL'
 
     
     def initAlgorithm(self, config):
@@ -40,7 +41,8 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
                 self.PARAM_ROUTECODE_ENUMS, 
                 self.tr('Коды участков'), 
                 options = self.route_codes,
-                allowMultiple=True
+                allowMultiple = True,
+                defaultValue = 'Y-K'
                 )
             )
         
@@ -48,7 +50,8 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterMultipleLayers(
                 self.PARAM_EXPORT_LAYERS,
                 self.tr('Cлои для генерации'),
-                QgsProcessing.TypeVectorPoint
+                QgsProcessing.TypeVectorPoint,
+                defaultValue = '123_DIR'
             )
         )
         
@@ -100,11 +103,18 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
                                        )
             )
         advanced_params.append(
+            QgsProcessingParameterString(self.PARAM_ITEM_ROUTE_LABEL,
+                                       self.tr('ID метки названия маршрута'),
+                                       defaultValue='route_label_id'
+                                       )
+            )
+        advanced_params.append(
             QgsProcessingParameterString(self.PARAM_ITEM_ID_WF_PIC,
                                        self.tr('ID общего вида носителя'),
                                        defaultValue='wf_pic_id'
                                        )
             )
+        
         for p in advanced_params:
             p.setFlags(p.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
             self.addParameter(p)
@@ -118,6 +128,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         export_layers = self.parameterAsLayerList(parameters, self.PARAM_EXPORT_LAYERS, context)
         wf_types_folder = self.parameterAsFile(parameters, self.PARAM_WF_TYPES_FOLDER, context)
         coords_label_id = self.parameterAsString(parameters, self.PARAM_ITEM_COORDS_LABEL, context)
+        route_label_id = self.parameterAsString(parameters, self.PARAM_ITEM_ROUTE_LABEL, context)
         page_label_id = self.parameterAsString(parameters, self.PARAM_ITEM_PAGE_LABEL, context)
         place_map_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_PLACE_MAP, context)
         general_map_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_GENERAL_MAP, context)
@@ -132,6 +143,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
             wf_types_folder,
             coords_label_id,
             page_label_id,
+            route_label_id,
             place_map_id,
             general_map_id,
             data_table_id,
@@ -144,13 +156,13 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         return {}
 
     def name(self):
-        return 'pages_generator'
+        return 'Генератор PDF'
 
     def displayName(self):
         return self.tr(self.name())
 
     def group(self):
-        return self.tr(self.groupId())
+        return 'Веломаршрут'
 
     def groupId(self):
         return 'Group1'

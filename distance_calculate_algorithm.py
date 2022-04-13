@@ -20,6 +20,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsProject,
     QgsFeature,
+    QgsProcessingParameterVectorLayer,
     )
 from qgis.PyQt.QtCore import QVariant
 from .distance_framework import DistanceCalculateFramework
@@ -47,31 +48,36 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         with some other properties.
         """
         self.addParameter(
-            QgsProcessingParameterMapLayer(
+            QgsProcessingParameterVectorLayer(
                 self.SIGN_INPUT,
                 self.tr('Слой с носителями'),
-                QgsProcessing.TypeVectorPoint
+                types=[QgsProcessing.TypeVectorPoint],
+                defaultValue='123_DIR'
             )
         )        
         self.addParameter(
             QgsProcessingParameterMultipleLayers(
                 self.POIS_INPUT,
                 self.tr('Слои с объектами'),
-                QgsProcessing.TypeVectorPoint
+                QgsProcessing.TypeVectorPoint,
+                defaultValue=['POI', 'locality', 'transport', 'services']
             )
         )        
         self.addParameter(
-            QgsProcessingParameterMapLayer(
+            QgsProcessingParameterVectorLayer(
                 self.MAIN_ROAD_INPUT,
                 self.tr('Слои с главной дорогой'),
-                QgsProcessing.TypeVectorLine
+                types=[QgsProcessing.TypeVectorLine],
+                defaultValue='main_route'
             )
         )    
         self.addParameter(
-            QgsProcessingParameterMapLayer(
+            QgsProcessingParameterVectorLayer(
                 self.SECONDARY_ROAD_INPUT,
                 self.tr('Слои с доп дорогами'),
-                QgsProcessing.TypeVectorLine
+                types=[QgsProcessing.TypeVectorLine],
+                defaultValue='secondary_routes'
+                
             )
         )    
         self.addParameter(
@@ -146,14 +152,14 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         Returns the translated algorithm name, which should be used for any
         user-visible display of the algorithm name.
         """
-        return self.tr(self.name())
+        return 'Расчет расстояний'
 
     def group(self):
         """
         Returns the name of the group this algorithm belongs to. This string
         should be localised.
         """
-        return self.tr(self.groupId())
+        return 'Веломаршрут'
 
     def groupId(self):
         """
