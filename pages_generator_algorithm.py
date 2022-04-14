@@ -121,6 +121,8 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
 
 
     def processAlgorithm(self, parameters, context, feedback):
+        logger = utils.FeedbackLogger(__name__, feedback)
+        logger.log_info('Analyze parameters')
         routecode_enums = self.parameterAsEnums(parameters, self.PARAM_ROUTECODE_ENUMS, context)
         routecodes = [self.route_codes[i] for i in routecode_enums]
         layout_enum = self.parameterAsEnum(parameters, self.PARAM_LAYOUT_NAME_ENUM, context)
@@ -135,6 +137,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         data_table_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_DATA_TABLE, context)
         wf_pic_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_WF_PIC, context)
         
+        logger.log_info('Init framework')
         framework = PageGeneratorFramework(
             export_layers, 
             routecodes,
@@ -149,10 +152,8 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
             data_table_id,
             wf_pic_id,
             )
-        try:
-            framework.main()
-        except Exception as e:
-            feedback.reportError(str(e))
+        logger.log_info('Start framework')
+        framework.main()
         return {}
 
     def name(self):

@@ -256,13 +256,12 @@ class DistanceCalculateFramework:
         reversed = self.current_direction[0] == 'B' 
         ok_service_layer = ok_service_feature = None
         min_distance = None
-        sign_geom = sign_feature.geometry()
         for service_layer, service_feature in self.iter_pois_by_name(service_name):
-            service_geom = xform_geometry(service_feature.geometry(), service_layer.sourceCrs(), self.sign_layer.sourceCrs())   
-            diff = service_geom.asPoint() - sign_geom.asPoint()
+            path = self.get_shortest_path_feature(sign_feature, service_layer, service_feature)
+            path_length = path['length_3d']
             if True:    # тут должна быть проверка на направление
-                if min_distance is None or diff.length() < min_distance:
-                    min_distance = diff.length()
+                if min_distance is None or path_length < min_distance:
+                    min_distance = path_length
                     ok_service_layer, ok_service_feature = service_layer, service_feature
         if ok_service_feature:
             return PackedFeature(ok_service_feature, ok_service_layer)
