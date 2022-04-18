@@ -9,7 +9,7 @@ from qgis._core import (
     QgsPointXY,
     QgsCoordinateReferenceSystem
     )
-from VeloRouteScripts.utils import *
+from VeloRouteScripts import utils
 
 
 
@@ -38,7 +38,7 @@ class PageGeneratorFramework:
                 wf_pic_id
                 ):
         self.feedback = feedback
-        self.logger = FeedbackLogger(__name__, self.feedback)
+        self.logger = utils.FeedbackLogger(__name__, self.feedback)
         self.logger.log_debug('Init...')
         self.project = QgsProject.instance()
         self.lay_mng = self.project.layoutManager()
@@ -49,7 +49,7 @@ class PageGeneratorFramework:
         self.current_layer = None
         self.current_page = None
         self.current_routecode = None
-        self.road_layer = get_main_road_layer()
+        self.road_layer = utils.get_main_road_layer()
         self.general_map_margin = 0.05
         self.wf_types_folder = wf_types_folder
         # items which we modify
@@ -116,8 +116,8 @@ class PageGeneratorFramework:
             minx,miny,maxx,maxy = self.get_road_extent(road_code)
             min_pt = QgsGeometry.fromPointXY(QgsPointXY(minx, miny))
             max_pt = QgsGeometry.fromPointXY(QgsPointXY(maxx, maxy))
-            min_pt = xform_geometry(min_pt, self.road_layer.sourceCrs(), map_crs)
-            max_pt = xform_geometry(max_pt, self.road_layer.sourceCrs(), map_crs)
+            min_pt = utils.xform_geometry(min_pt, self.road_layer.sourceCrs(), map_crs)
+            max_pt = utils.xform_geometry(max_pt, self.road_layer.sourceCrs(), map_crs)
             new_extent = QgsRectangle(min_pt.asPoint(), max_pt.asPoint())
             #add margin
             ymargin = new_extent.height()*self.general_map_margin
@@ -181,7 +181,7 @@ class PageGeneratorFramework:
         for layer in self.layers:
             #turn on feature in beginning to init features
             layer.setSubsetString('')
-            for feature in iter_pois_along_road(self.road_layer, self.layers, self.feedback):
+            for feature in utils.iter_pois_along_road(self.road_layer, self.layers, self.feedback):
                 if feature[self.feature_route_code_field] in self.route_codes:
                     feature_id = feature[self.id_field]
                     self.logger.log_info(f'Currents: layer = {layer.name()}, feature_id = {feature_id}')
@@ -193,7 +193,7 @@ class PageGeneratorFramework:
                      
     def get_transformed_current_point(self, target_crs):
         geometry = self.current_feature.geometry()
-        geometry = xform_geometry(geometry, self.current_layer.sourceCrs(), target_crs)
+        geometry = utils.xform_geometry(geometry, self.current_layer.sourceCrs(), target_crs)
         return geometry.asPoint()
         
     def generate_table(self):
@@ -205,7 +205,7 @@ class PageGeneratorFramework:
         for k,v in zip(feature_fields, feature_attributes):
             if k not in self.nonprint_table_columns:
                 trs.append(f'<tr><td>{k}</td><td>{v}</td></tr>')
-        html_table = f'<table>{"".join(trs)}</table>'
+        html_table = f'<table><thead><tr><th>Поле</th>Значение<th></th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
         table_item.setHtml(html_table)
         table_item.loadHtml()
         self.logger.log_info('DONE')
@@ -217,7 +217,7 @@ class PageGeneratorFramework:
             self.recenter_main_map()
             self.extent_general_map()
             self.change_picture()
-            # self.generate_table()
+            self.generate_table()
             self.update_labels()
         except Exception as e:
             self.logger.log_error(f'ERROR updating layout: {e}')
@@ -227,10 +227,8 @@ class PageGeneratorFramework:
         self.logger.log_debug('Generate id')
         self.turn_on_all_features()
         for layer in self.layers:
-            print (layer.name())
             layer.startEditing()
             for i,feature in enumerate(layer.getFeatures()):
-                print(i, feature)
                 feature.setAttribute(self.id_field, i+1)
                 layer.updateFeature(feature)
             layer.commitChanges()
@@ -249,6 +247,7 @@ class PageGeneratorFramework:
             self.update_layout()
             self.export(folder)
             self.current_page += 1
+        del self.logger
     
 
 # pr = QgsProject.instance()

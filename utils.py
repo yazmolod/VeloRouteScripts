@@ -17,6 +17,10 @@ class FeedbackLogger:
         self.feedback = feedback
         self.name = name
         self.logger = self.get_logger()
+        self.log_debug(f'INIT LOGGER {name}')
+        
+    def __del__(self):
+        self.clean()
     
     def get_logger(self):
         logger = logging.getLogger(self.name)
@@ -28,6 +32,12 @@ class FeedbackLogger:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
         return logger
+
+    def clean(self):
+        for i in range(len(self.logger.handlers)):
+            handler = self.logger.handlers[i]
+            self.logger.removeHandler(handler)
+            handler.close()
     
     def log_debug(self, msg):
         self.logger.debug(msg)
@@ -57,17 +67,14 @@ def draw_line(crs, *geometries):
     QgsProject.instance().addMapLayer(layer)
     
 def xform_geometry(geometry, source_crs, target_crs):
-        LOGGER.log_debug('Xform geometry')
         xform = QgsCoordinateTransform(source_crs, target_crs, QgsProject.instance())
         geometry.transform(xform)
         return geometry
     
 def xform_geometry_4326(geometry, source_crs):
-        LOGGER.log_debug('Xform geometry to 4326')
         return xform_geometry(geometry, source_crs, QgsCoordinateReferenceSystem("EPSG:4326"))
 
 def get_route_codes():
-    LOGGER.log_debug('Getting route codes')
     layer = get_main_road_layer()
     if not layer:
         return []
@@ -76,12 +83,13 @@ def get_route_codes():
         return list(codes)
             
 def get_main_road_layer():
-    LOGGER.log_debug('Looking for main road')
     pr = QgsProject.instance()
     for k,v in pr.mapLayers().items():
         if re.findall(r'^main_route', k, re.IGNORECASE):
             return v
-    LOGGER.log_error('Cant find main road layer')
+    logger = FeedbackLogger(__name__)
+    logger.log_error('Cant find main road layer')
+    del logger
         
 
 class FeedbackImitator:
@@ -169,4 +177,5 @@ def iter_pois_along_road(road_layer, poi_layers, feedback):
         for i, pt_f in enumerate(pt_group_sorted):
             logger.log_info(f'[IterAlongRoad] Yield points {i+1}/{len(pt_group_sorted)} (road {road_id})')
             yield pt_f.feature
+    del logger
     
