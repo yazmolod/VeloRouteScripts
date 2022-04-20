@@ -10,7 +10,7 @@ from qgis._core import (
     QgsCoordinateReferenceSystem
     )
 from VeloRouteScripts import utils
-
+import time
 
 
 
@@ -48,7 +48,6 @@ class PageGeneratorFramework:
         self.current_feature = None
         self.current_layer = None
         self.current_page = None
-        self.current_routecode = None
         self.road_layer = utils.get_main_road_layer()
         self.general_map_margin = 0.05
         self.wf_types_folder = wf_types_folder
@@ -71,15 +70,15 @@ class PageGeneratorFramework:
             return item
 
     def export(self, folder):
-        # filepath = folder / ('%05d.pdf' % self.current_page)
-        filepath = folder / ('%05d.png' % self.current_page)
+        filepath = folder / ('%05d.pdf' % self.current_page)
+        # filepath = folder / ('%05d.png' % self.current_page)
         self.logger.log_info(f'File {filepath} saving...')
-        # settings = QgsLayoutExporter.PdfExportSettings()
-        settings = QgsLayoutExporter.ImageExportSettings()
+        settings = QgsLayoutExporter.PdfExportSettings()
+        # settings = QgsLayoutExporter.ImageExportSettings()
         exporter = QgsLayoutExporter(self.layout)
         try:
-            # status = exporter.exportToPdf(str(filepath), settings)
-            status = exporter.exportToImage(str(filepath), settings)
+            status = exporter.exportToPdf(str(filepath), settings)
+            # status = exporter.exportToImage(str(filepath), settings)
         except Exception as e:
             self.logger.log_error(f'ERROR {filepath}: {e}')
         else:
@@ -163,7 +162,7 @@ class PageGeneratorFramework:
         pt = self.get_transformed_current_point(QgsCoordinateReferenceSystem("EPSG:4326"))
         self.get_layout_item(self.page_label_id).setText(str(self.current_page))
         self.get_layout_item(self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
-        self.get_layout_item(self.route_label_id).setText('%s' % self.current_routecode)
+        self.get_layout_item(self.route_label_id).setText('Участок %s' % self.current_feature[self.feature_route_code_field])
         self.logger.log_info('DONE')
         
     def turn_on_all_features(self):
@@ -205,22 +204,28 @@ class PageGeneratorFramework:
         for k,v in zip(feature_fields, feature_attributes):
             if k not in self.nonprint_table_columns:
                 trs.append(f'<tr><td>{k}</td><td>{v}</td></tr>')
-        html_table = f'<table><thead><tr><th>Поле</th>Значение<th></th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
+        html_table = f'<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
+        self.logger.log_debug(html_table)
         table_item.setHtml(html_table)
-        table_item.loadHtml()
+        # программа крашится
+        # table_item.loadHtml()
         self.logger.log_info('DONE')
         
     def update_layout(self):
         self.logger.log_debug('Update layout')
-        try:
-            self.layout.refresh()
-            self.recenter_main_map()
-            self.extent_general_map()
-            self.change_picture()
-            self.generate_table()
-            self.update_labels()
-        except Exception as e:
-            self.logger.log_error(f'ERROR updating layout: {e}')
+        funcs = [
+            self.recenter_main_map,
+            self.extent_general_map,
+            self.change_picture,
+            self.generate_table,
+            self.update_labels
+                ]
+        for f in funcs:
+            try:
+                f()
+            except Exception as e:
+                self.logger.log_error(f'ERROR on {f.__name__}: {e}')
+        self.layout.refresh()
             
         
     def generate_id(self):
