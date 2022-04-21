@@ -7,42 +7,40 @@ from qgis._core import (
     QgsLayoutExporter,
     QgsGeometry,
     QgsPointXY,
-    QgsCoordinateReferenceSystem
+    QgsCoordinateReferenceSystem,
+    QgsExpressionContextUtils,
     )
 from VeloRouteScripts import utils
 import time
 
 
 
-class PageGeneratorFramework:
-    
-    nonprint_table_columns = ['id', 'Num', 'type', 'routcode', 'degree']
-    
+class PageGeneratorFramework:    
+    nonprint_table_columns = ['id', 'Num', 'type', 'routcode', 'degree']    
     id_field = 'id'
     feature_route_code_field = 'routcode'
-    road_route_code_field = 'CODE'
-    
+    road_route_code_field = 'CODE'   
     
     def __init__(self, 
-                export_layers, 
-                export_route_codes,
-                layout_name, 
                 feedback,
-                wf_types_folder,
-                coords_label_id,
-                page_label_id,
-                route_label_id,
-                place_map_id,
-                general_map_id,
-                data_table_id,
-                wf_pic_id
+                export_layers, 
+                export_route_codes=None,
+                reference_layout_name=None,
+                wf_types_folder=None,
+                coords_label_id=None,
+                page_label_id=None,
+                route_label_id=None,
+                place_map_id=None,
+                general_map_id=None,
+                data_table_id=None,
+                wf_pic_id=None,
                 ):
         self.feedback = feedback
         self.logger = utils.FeedbackLogger(__name__, self.feedback)
         self.logger.log_debug('Init...')
         self.project = QgsProject.instance()
         self.lay_mng = self.project.layoutManager()
-        self.layout = self.lay_mng.layoutByName(layout_name)
+        self.reference_layout = self.lay_mng.layoutByName(reference_layout_name)
         self.layers = export_layers
         self.route_codes = export_route_codes
         self.current_feature = None
@@ -62,27 +60,30 @@ class PageGeneratorFramework:
         
 
         
-    def get_layout_item(self, item_id):
-        item = self.layout.itemById(item_id)
+    def get_layout_item(self, layout, item_id):
+        item = layout.itemById(item_id)
         if item is None:
             raise Exception('Item {} was not found'.format(item_id))
         else:
             return item
 
-    def export(self, folder):
-        filepath = folder / ('%05d.pdf' % self.current_page)
-        # filepath = folder / ('%05d.png' % self.current_page)
+    def export(self, folder, layout, page):
+        filepath = folder / ('%05d.pdf' % int(page))
         self.logger.log_info(f'File {filepath} saving...')
         settings = QgsLayoutExporter.PdfExportSettings()
-        # settings = QgsLayoutExporter.ImageExportSettings()
-        exporter = QgsLayoutExporter(self.layout)
-        try:
-            status = exporter.exportToPdf(str(filepath), settings)
-            # status = exporter.exportToImage(str(filepath), settings)
-        except Exception as e:
-            self.logger.log_error(f'ERROR {filepath}: {e}')
-        else:
-            self.logger.log_info(f'File {filepath} saved with status {status}')
+        exporter = QgsLayoutExporter(layout)
+        status = exporter.exportToPdf(str(filepath), settings)
+        self.logger.log_info(f'Export status {status}')
+        
+        
+    def duplicate_reference_layout(self):
+        self.logger.log_debug('Duplicate layout')
+        new_name = self.lay_mng.generateUniqueTitle()
+        return self.lay_mng.duplicateLayout(self.reference_layout, new_name)
+    
+    def remove_layout(self, layout):
+        self.logger.log_debug('Remove layout')
+        return self.lay_mng.removeLayout(layout)
     
     def generate_export_folder(self):
         project_folder = Path(self.project.homePath())
@@ -92,9 +93,9 @@ class PageGeneratorFramework:
         layout_folder.mkdir(parents=True, exist_ok=True)
         return layout_folder
   
-    def recenter_main_map(self):
+    def recenter_main_map(self, layout):
         self.logger.log_info('Recenter place map...')
-        map_item = self.get_layout_item(self.place_map_id)
+        map_item = self.get_layout_item(layout, self.place_map_id)
         map_scale = map_item.scale()
         map_crs = map_item.crs()
         pt = self.get_transformed_current_point(map_crs)
@@ -103,9 +104,9 @@ class PageGeneratorFramework:
         map_item.setScale(map_scale)
         self.logger.log_info('DONE')
         
-    def extent_general_map(self):
+    def extent_general_map(self, layout):
         self.logger.log_info('Extent general map...')
-        map_item = self.get_layout_item(self.general_map_id)
+        map_item = self.get_layout_item(layout, self.general_map_id)
         map_crs = map_item.crs()
         field_names = [i.name() for i in self.current_feature.fields()]
         if self.feature_route_code_field not in field_names:
@@ -143,9 +144,9 @@ class PageGeneratorFramework:
         else:            
             return result_bbox.xMinimum(), result_bbox.yMinimum(), result_bbox.xMaximum(), result_bbox.yMaximum()
         
-    def change_picture(self):
+    def change_picture(self, layout):
         self.logger.log_info('Change wf pic...')
-        pic_item = self.get_layout_item(self.wf_pic_id)
+        pic_item = self.get_layout_item(layout, self.wf_pic_id)
         pic_path = Path(pic_item.picturePath())
         if pic_path.stem != self.current_layer.name():
             new_path = pic_path.parent / (self.current_layer.name() + '.jpg')
@@ -157,12 +158,12 @@ class PageGeneratorFramework:
             self.logger.log_info('No need change pic')
         self.logger.log_info('DONE')
         
-    def update_labels(self):
+    def update_labels(self, layout):
         self.logger.log_info('Update labels...')
         pt = self.get_transformed_current_point(QgsCoordinateReferenceSystem("EPSG:4326"))
-        self.get_layout_item(self.page_label_id).setText(str(self.current_page))
-        self.get_layout_item(self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
-        self.get_layout_item(self.route_label_id).setText('Участок %s' % self.current_feature[self.feature_route_code_field])
+        self.get_layout_item(layout, self.page_label_id).setText(str(self.current_page))
+        self.get_layout_item(layout, self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
+        self.get_layout_item(layout, self.route_label_id).setText('Участок %s' % self.current_feature[self.feature_route_code_field])
         self.logger.log_info('DONE')
         
     def turn_on_all_features(self):
@@ -176,28 +177,19 @@ class PageGeneratorFramework:
             layer.setSubsetString('{}=-1'.format(self.id_field))
         
     def iter_ordered_features(self):
-        self.turn_off_all_features()
-        for layer in self.layers:
-            #turn on feature in beginning to init features
-            layer.setSubsetString('')
-            for feature in utils.iter_pois_along_road(self.road_layer, self.layers, self.feedback):
-                if feature[self.feature_route_code_field] in self.route_codes:
-                    feature_id = feature[self.id_field]
-                    self.logger.log_info(f'Currents: layer = {layer.name()}, feature_id = {feature_id}')
-                    # change current feature
-                    layer.setSubsetString('{}={}'.format(self.id_field, feature_id))
-                    yield layer, feature
-            layer.setSubsetString('{}=-1'.format(self.id_field))
         self.turn_on_all_features()
+        for layer, feature in utils.iter_pois_along_road(self.road_layer, self.layers, self.feedback):
+            if feature[self.feature_route_code_field] in self.route_codes:                
+                yield layer, feature
                      
     def get_transformed_current_point(self, target_crs):
         geometry = self.current_feature.geometry()
         geometry = utils.xform_geometry(geometry, self.current_layer.sourceCrs(), target_crs)
         return geometry.asPoint()
         
-    def generate_table(self):
+    def generate_table(self, layout):
         self.logger.log_info('Update data table...')
-        table_item = self.get_layout_item(self.data_table_id).multiFrame()
+        table_item = self.get_layout_item(layout, self.data_table_id).multiFrame()
         feature_fields = [i.name() for i in self.current_feature.fields()]
         feature_attributes = self.current_feature.attributes()
         trs = []
@@ -205,13 +197,12 @@ class PageGeneratorFramework:
             if k not in self.nonprint_table_columns:
                 trs.append(f'<tr><td>{k}</td><td>{v}</td></tr>')
         html_table = f'<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
-        self.logger.log_debug(html_table)
         table_item.setHtml(html_table)
         # программа крашится
         # table_item.loadHtml()
         self.logger.log_info('DONE')
         
-    def update_layout(self):
+    def update_layout(self, layout):
         self.logger.log_debug('Update layout')
         funcs = [
             self.recenter_main_map,
@@ -222,10 +213,9 @@ class PageGeneratorFramework:
                 ]
         for f in funcs:
             try:
-                f()
+                f(layout)
             except Exception as e:
                 self.logger.log_error(f'ERROR on {f.__name__}: {e}')
-        self.layout.refresh()
             
         
     def generate_id(self):
@@ -237,42 +227,58 @@ class PageGeneratorFramework:
                 feature.setAttribute(self.id_field, i+1)
                 layer.updateFeature(feature)
             layer.commitChanges()
-                
-
-    def main(self):
+    
+    def generate_layouts(self):
         self.generate_id()         
-        self.current_page = 1    
-        folder = self.generate_export_folder()
+        self.current_page = 1
+        layouts = []
         for layer, feature in self.iter_ordered_features():
             if self.feedback.isCanceled():
                 break
-            self.logger.log_debug('%s %d' % (layer.name(), feature['id']))
-            self.current_feature = feature
-            self.current_layer = layer
-            self.update_layout()
-            self.export(folder)
-            self.current_page += 1
-        del self.logger
+            else:
+                self.logger.log_info(f'Generating layout: layer = {layer.name()}, feature_id = {feature[self.id_field]}')
+                self.current_feature = feature
+                self.current_layer = layer
+                layout = self.duplicate_reference_layout()
+                self.update_layout(layout)
+                # сохраняем переменные для экспорта
+                layout_variables = {
+                    'export_layer_id': layer.id(),
+                    'export_feature_id': feature[self.id_field],
+                    'export_page': self.current_page,
+                }
+                QgsExpressionContextUtils.setLayoutVariables(layout, layout_variables)
+                layouts.append(layout)
+                self.current_page += 1
+        return layouts
     
-
-# pr = QgsProject.instance()
-# l1 = pr.mapLayersByName('123_DIR')[0]
-# l2 = pr.mapLayersByName('201_SIGN')[0]
-# gen = PageGeneratorFramework(
-#     [l1, l2], 
-#     ['Y-K', 'H-Z', 'P-M'],
-#     'test', 
-#     FeedbackImitator(),
-#     r"D:\Yandex\YandexDisk\freelance\плагин qgis\QGIS_deploy_prototype_v3\QGIS_deploy_prototype\wf_type_previews",
-#     "coords_label_id",
-#     "page_label_id",
-#     "route_label_id",
-#     "place_map_id",
-#     "general_map_id",
-#     "data_table_id",
-#     "wf_pic_id"
-#     )
-# gen.main()
-#gen.generate_id()
+    def export_layouts_by_names(self, layout_names):
+        layouts = [self.lay_mng.layoutByName(i) for i in layout_names]
+        return self.export_layouts(layouts)
+    
+    def export_layouts(self, layouts):
+        folder = self.generate_export_folder()
+        self.turn_off_all_features()
+        for layout in layouts:
+            if self.feedback.isCanceled():
+                break
+            else:
+                layout_scope = layout.createExpressionContext()
+                layer_id = layout_scope.variable('export_layer_id')
+                feature_id = layout_scope.variable('export_feature_id')
+                page = layout_scope.variable('export_page')
+                if not layer_id or not feature_id or not page:
+                    self.logger.log_error("Can't find custom property for layer or feature")
+                else:
+                    self.logger.log_info(f'Export layout: layer_id = {layer_id}, feature_id = {feature_id}')
+                    layer = self.project.mapLayer(layer_id)
+                    layer.setSubsetString('{}={}'.format(self.id_field, feature_id))
+                    dup_layout = self.lay_mng.duplicateLayout(layout, '_temp')
+                    self.export(folder, dup_layout, page)
+                    self.remove_layout(dup_layout)
+                    # self.remove_layout(layout)
+                    layer.setSubsetString('{}=-1'.format(self.id_field))
+        self.turn_on_all_features()
+        del self.logger
 
 

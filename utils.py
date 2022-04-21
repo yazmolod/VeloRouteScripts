@@ -34,8 +34,8 @@ class FeedbackLogger:
         return logger
 
     def clean(self):
-        for i in range(len(self.logger.handlers)):
-            handler = self.logger.handlers[i]
+        while len(self.logger.handlers) > 0:
+            handler = self.logger.handlers[0]
             self.logger.removeHandler(handler)
             handler.close()
     
@@ -176,6 +176,6 @@ def iter_pois_along_road(road_layer, poi_layers, feedback):
         pt_group_sorted = sort_grouped_points(road_packed_feature, pt_group)
         for i, pt_f in enumerate(pt_group_sorted):
             logger.log_info(f'[IterAlongRoad] Yield points {i+1}/{len(pt_group_sorted)} (road {road_id})')
-            yield pt_f.feature
+            yield pt_f.layer, pt_f.feature
     del logger
     

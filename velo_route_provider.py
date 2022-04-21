@@ -32,7 +32,10 @@ __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
 from .distance_calculate_algorithm import DistanceCalculateAlgorithm
-from .pages_generator_algorithm import PagesGeneratorAlgorithm
+from .pages_generator_algorithm import (
+    PagesGeneratorAlgorithm, 
+    PagesExporterAlgorithm,
+    )
 from .csv_export_algorithm import CsvExportAlgorithm
 
 class VeloRouteProvider(QgsProcessingProvider):
@@ -56,6 +59,7 @@ class VeloRouteProvider(QgsProcessingProvider):
         """
         self.addAlgorithm(DistanceCalculateAlgorithm())
         self.addAlgorithm(PagesGeneratorAlgorithm())
+        self.addAlgorithm(PagesExporterAlgorithm())
         self.addAlgorithm(CsvExportAlgorithm())
 
     def id(self):

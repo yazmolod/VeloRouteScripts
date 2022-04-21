@@ -16,6 +16,65 @@ from VeloRouteScripts import utils
 from .pages_framework import PageGeneratorFramework
 from pathlib import Path
 
+def get_layout_names():
+    if QgsProject.instance() and QgsProject.instance().layoutManager():
+        return [i.name() for i in QgsProject.instance().layoutManager().layouts()]
+    else:
+        return []
+
+class PagesExporterAlgorithm(QgsProcessingAlgorithm):
+    PARAM_EXPORT_LAYOUTS_ENUMS = 'PARAM_EXPORT_LAYOUTS'
+    PARAM_EXPORT_LAYERS = 'PARAM_EXPORT_LAYERS'
+
+    def initAlgorithm(self, config):
+        self.layout_names = get_layout_names()
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.PARAM_EXPORT_LAYOUTS_ENUMS, 
+                self.tr('Листы для экспорта'), 
+                options = self.layout_names,
+                allowMultiple = True,
+                )
+            )
+        self.addParameter(
+            QgsProcessingParameterMultipleLayers(
+                self.PARAM_EXPORT_LAYERS,
+                self.tr('Cлои для генерации'),
+                QgsProcessing.TypeVectorPoint,
+                defaultValue = '123_DIR'
+            )
+        )
+
+    def processAlgorithm(self, parameters, context, feedback):
+        export_layers = self.parameterAsLayerList(parameters, self.PARAM_EXPORT_LAYERS, context)
+        layout_enums = self.parameterAsEnums(parameters, self.PARAM_EXPORT_LAYOUTS_ENUMS, context)
+        layout_names = [self.layout_names[i] for i in layout_enums]
+        framework = PageGeneratorFramework(
+            feedback,
+            export_layers,
+            )
+        framework.export_layouts_by_names(layout_names)
+        return {}
+
+    def name(self):
+        return 'Экспорт PDF'
+
+    def displayName(self):
+        return self.tr(self.name())
+
+    def group(self):
+        return 'Веломаршрут'
+
+    def groupId(self):
+        return 'Group1'
+
+    def tr(self, string):
+        return QCoreApplication.translate('Processing', string)
+
+    def createInstance(self):
+        return PagesExporterAlgorithm()
+    
+
 class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
     PARAM_ROUTECODE_ENUMS = 'PARAM_ROUTECODE_ENUMS'
     PARAM_LAYOUT_NAME_ENUM = 'PARAM_LAYOUT_NAME_ENUM'
@@ -34,7 +93,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         self.project_instance = QgsProject.instance()
         self.project_folder = Path(self.project_instance.homePath())
         self.route_codes = utils.get_route_codes()
-        self.layout_names = self.get_layout_names()
+        self.layout_names = get_layout_names()
         
         self.addParameter(
             QgsProcessingParameterEnum(
@@ -137,12 +196,12 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         data_table_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_DATA_TABLE, context)
         wf_pic_id = self.parameterAsString(parameters, self.PARAM_ITEM_ID_WF_PIC, context)
         
-        logger.log_info('Init framework')
+        
         framework = PageGeneratorFramework(
+            feedback,
             export_layers, 
             routecodes,
             layout_name, 
-            feedback,
             wf_types_folder,
             coords_label_id,
             page_label_id,
@@ -153,7 +212,8 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
             wf_pic_id,
             )
         logger.log_info('Start framework')
-        framework.main()
+        layouts = framework.generate_layouts()
+        # framework.export_layouts(layouts)
         return {}
 
     def name(self):
@@ -175,8 +235,6 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         return PagesGeneratorAlgorithm()
     
     ### CUSTOM ###
-    def get_layout_names(self):
-        return [i.name() for i in self.project_instance.layoutManager().layouts()]
     
     def find_wf_folder(self):
         for p in self.project_folder.glob('**/*'):
