@@ -57,7 +57,7 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
         return {}
 
     def name(self):
-        return 'Экспорт PDF'
+        return 'Листы: экспорт PDF'
 
     def displayName(self):
         return self.tr(self.name())
@@ -217,7 +217,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         return {}
 
     def name(self):
-        return 'Генератор PDF'
+        return 'Листы: генерация'
 
     def displayName(self):
         return self.tr(self.name())
