@@ -24,9 +24,6 @@ class CsvExportAlgorithm(QgsProcessingAlgorithm):
     PARAM_PIC_FILEPATH = 'PARAM_PIC_FILEPATH'
     PARAM_ROUTECODE_ENUM = 'PARAM_ROUTECODE_ENUM'
     
-    # def __init__(self, routes, *args, **kwargs):
-    #     super().__init__(*args, **kwargs)
-    #     self.routes = routes
     
     def initAlgorithm(self, config):
         self.project_instance = QgsProject.instance()
@@ -113,6 +110,23 @@ class CsvExportAlgorithm(QgsProcessingAlgorithm):
     def createInstance(self):
         return CsvExportAlgorithm()
     
+    def shortHelpString(self):
+        return  "<b>Параметры</b><ul>"\
+                "<li><b>Экспортируемые слои</b> - слои проекта, чьи поля будут конвертированы в csv</li>"\
+                "<li><b>Код участка</b> - список формируется на основании значений поля CODE в слое типа "\
+                "“main_route”. Если код участка для элемента экспорта не входит в список, то он будет проигнорирован</li>"\
+                "<li><b>Автозамена на пиктограмы</b> - если стоит галочка, то значения полей типа “PIC” будут "\
+                "конвертированы в соответствии с таблицей пиктограмм (см. следующий параметр)</li>"\
+                "<li><b>Файл с таблицей пиктограмм</b> - csv файл формата Название-Пиктограма. "\
+                "Файл автоматически ищется в папке проекта (первый найденный файл формата csv, который "\
+                "содержит в имени “pic” вне зависимости от регистра)</li>"\
+                "</ul>"\
+                "<b>Результат</b><ul>"\
+                "<li>В папке проекта создастся папка Инфоплан, если таковой не было</li>"\
+                "<li>Внутри нее для каждого участка создастся папка с именем формата “Код участка_дата”</li>"\
+                "<li>Внутри нее будет лежать csv файл в кодировке utf-16</li>"\
+                "</ul>"
+    
     ### CUSTOM ###
     
     def load_pic_replace_table(self, path):
@@ -127,7 +141,7 @@ class CsvExportAlgorithm(QgsProcessingAlgorithm):
     
     def find_pic_table(self):
         for p in self.project_folder.glob('**/*.csv'):
-            if 'pic' in p.name:
+            if 'pic' in p.name.lower():
                 return p
         return self.project_folder
     

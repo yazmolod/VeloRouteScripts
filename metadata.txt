@@ -10,10 +10,10 @@ version=0.1
 author=yazmolod
 email=yazmolod@gmail.com
 
-about=Provide a brief description of the plugin and its purpose.
+about=Инструкция - https://docs.google.com/document/d/1_g284GvDaIU3xvLso-lwET-VerLFdTI4JoN1BFVfK7E/edit#
 
-tracker=http://bugs
-repository=http://repo
+tracker=https://github.com/yazmolod/VeloRouteScripts/issues
+repository=https://github.com/yazmolod/VeloRouteScripts
 # End of mandatory metadata
 
 # Recommended items:

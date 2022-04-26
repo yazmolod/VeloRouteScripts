@@ -9,6 +9,7 @@ from qgis._core import (
     QgsPointXY,
     QgsCoordinateReferenceSystem,
     QgsExpressionContextUtils,
+    QgsRenderContext,
     )
 from VeloRouteScripts import utils
 import time
@@ -66,11 +67,21 @@ class PageGeneratorFramework:
             raise Exception('Item {} was not found'.format(item_id))
         else:
             return item
+        
+    def get_pdf_settings(self):
+        settings = QgsLayoutExporter.PdfExportSettings()
+        settings.forceVectorOutput = False
+        settings.exportMetadata = False
+        settings.textRenderFormat = QgsRenderContext.TextFormatAlwaysOutlines
+        settings.appendGeoreference = False 
+        settings.includeGeoPdfFeatures = False
+        settings.rasterizeWholeImage = True
+        return settings
 
     def export(self, folder, layout, page):
         filepath = folder / ('%05d.pdf' % int(page))
         self.logger.log_info(f'File {filepath} saving...')
-        settings = QgsLayoutExporter.PdfExportSettings()
+        settings = self.get_pdf_settings()
         exporter = QgsLayoutExporter(layout)
         status = exporter.exportToPdf(str(filepath), settings)
         self.logger.log_info(f'Export status {status}')
@@ -82,7 +93,7 @@ class PageGeneratorFramework:
         return self.lay_mng.duplicateLayout(self.reference_layout, new_name)
     
     def remove_layout(self, layout):
-        self.logger.log_debug('Remove layout')
+        self.logger.log_debug('Remove layout {layout.name()}')
         return self.lay_mng.removeLayout(layout)
     
     def generate_export_folder(self):
@@ -161,7 +172,7 @@ class PageGeneratorFramework:
     def update_labels(self, layout):
         self.logger.log_info('Update labels...')
         pt = self.get_transformed_current_point(QgsCoordinateReferenceSystem("EPSG:4326"))
-        self.get_layout_item(layout, self.page_label_id).setText(str(self.current_page))
+        self.get_layout_item(layout, self.page_label_id).setText('стр ' + str(self.current_page))
         self.get_layout_item(layout, self.coords_label_id).setText('%.6f, %.6f'% (pt.x(), pt.y()))
         self.get_layout_item(layout, self.route_label_id).setText('Участок %s' % self.current_feature[self.feature_route_code_field])
         self.logger.log_info('DONE')
@@ -196,7 +207,7 @@ class PageGeneratorFramework:
         for k,v in zip(feature_fields, feature_attributes):
             if k not in self.nonprint_table_columns:
                 trs.append(f'<tr><td>{k}</td><td>{v}</td></tr>')
-        html_table = f'<table><thead><tr><th>Поле</th><th>Значение</th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
+        html_table = f'<table><thead><tr><th>Инфоплан</th><th></th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
         table_item.setHtml(html_table)
         # программа крашится
         # table_item.loadHtml()
@@ -252,11 +263,11 @@ class PageGeneratorFramework:
                 self.current_page += 1
         return layouts
     
-    def export_layouts_by_names(self, layout_names):
+    def export_layouts_by_names(self, layout_names, del_layout=False):
         layouts = [self.lay_mng.layoutByName(i) for i in layout_names]
-        return self.export_layouts(layouts)
+        return self.export_layouts(layouts, del_layout=del_layout)
     
-    def export_layouts(self, layouts):
+    def export_layouts(self, layouts, del_layout=False):
         folder = self.generate_export_folder()
         self.turn_off_all_features()
         for layout in layouts:
@@ -273,10 +284,9 @@ class PageGeneratorFramework:
                     self.logger.log_info(f'Export layout: layer_id = {layer_id}, feature_id = {feature_id}')
                     layer = self.project.mapLayer(layer_id)
                     layer.setSubsetString('{}={}'.format(self.id_field, feature_id))
-                    dup_layout = self.lay_mng.duplicateLayout(layout, '_temp')
-                    self.export(folder, dup_layout, page)
-                    self.remove_layout(dup_layout)
-                    # self.remove_layout(layout)
+                    self.export(folder, layout, page)
+                    if del_layout:
+                        self.remove_layout(layout)
                     layer.setSubsetString('{}=-1'.format(self.id_field))
         self.turn_on_all_features()
         del self.logger

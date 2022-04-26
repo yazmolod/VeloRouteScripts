@@ -66,7 +66,7 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.MAIN_ROAD_INPUT,
-                self.tr('Слои с главной дорогой'),
+                self.tr('Слой с главными дорогами'),
                 types=[QgsProcessing.TypeVectorLine],
                 defaultValue='main_route'
             )
@@ -74,7 +74,7 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.SECONDARY_ROAD_INPUT,
-                self.tr('Слои с доп дорогами'),
+                self.tr('Слой с доп. дорогами'),
                 types=[QgsProcessing.TypeVectorLine],
                 defaultValue='secondary_routes'
                 
@@ -83,14 +83,14 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterRasterLayer(
                 self.HEIGHTS_INPUT,
-                self.tr('Слои с высотами'),
+                self.tr('Слой с картой высот рельефа'),
                 optional=True,
             )
         )    
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.PATHS_OUTPUT,
-                self.tr('Кратчайшие пути'),
+                self.tr('Итоговый слой с кратчайшими путями'),
                 type=QgsProcessing.TypeVectorLine
             )
         )
@@ -107,9 +107,6 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
 
 
     def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
         sign_layer = self.parameterAsLayer(parameters, self.SIGN_INPUT, context)
         main_road_layer = self.parameterAsLayer(parameters, self.MAIN_ROAD_INPUT, context)
         secondary_road_layer = self.parameterAsLayer(parameters, self.SECONDARY_ROAD_INPUT, context)
@@ -138,37 +135,15 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
     
 
     def name(self):
-        """
-        Returns the algorithm name, used for identifying the algorithm. This
-        string should be fixed for the algorithm, and must not be localised.
-        The name should be unique within each provider. Names should contain
-        lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
-        """
         return 'distance_calculate'
 
     def displayName(self):
-        """
-        Returns the translated algorithm name, which should be used for any
-        user-visible display of the algorithm name.
-        """
         return 'Расчет расстояний'
 
     def group(self):
-        """
-        Returns the name of the group this algorithm belongs to. This string
-        should be localised.
-        """
         return 'Веломаршрут'
 
     def groupId(self):
-        """
-        Returns the unique ID of the group this algorithm belongs to. This
-        string should be fixed for the algorithm, and must not be localised.
-        The group id should be unique within each provider. Group id should
-        contain lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
-        """
         return 'Group1'
 
     def tr(self, string):
@@ -176,3 +151,25 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
 
     def createInstance(self):
         return DistanceCalculateAlgorithm()
+
+    def shortHelpString(self):
+        return "<b>Параметры</b><ul>"\
+                "<li><b>Слой с носителями</b> - слой, от объектов которого будут "\
+                "начинаться расчеты кратчайших путей</li>"\
+                "<li><b>Слой с объектами</b> - слои, в которых будут искаться объекты "\
+                "по названию и до которых будет считаться маршрут (в том числе сервисы)</li>"\
+                "<li><b>Слой с главными дорогами</b> - основной маршрут сети передвижения, "\
+                "в котором обозначены коды участков</li>"\
+                "<li><b>Слой с доп.дорогами</b> - слой, в котором обозначены второстепенные "\
+                "участки дороги, также используется для построение сети передвижения</li>"\
+                "<li><b>Слой с картой высот рельефа</b> - растровый слой, в котором значение пикселя "\
+                "соответствует высоте рельефа от уровня моря (с сайта USGS Earthexplorer, алгоритм mean)</li>"\
+                "<li><b>Topology tolerance</b> - степень “сшивания” дорожной сети. Если все "\
+                "сопряжения всех участков лежат точно на полилиниях, то значения оставить как 0</li>"\
+                "</ul>"\
+                "<b>Результат</b><ul>"\
+                "<li>Будет создан слой с линиями кратчайших путей. Он поможет отслеживать "\
+                "корректность работы алгоритма, а также посмотреть рассчитанные длины путей (2d - без учета рельефа, 3d - с учетом)</li>"\
+                "<li>В аттрибутивке слоя носителей обновятся значения для параметров типа: "\
+                "PIC, km, NameEn, а так же присвоен код ближайшего участка</li>"\
+                "</ul>"\

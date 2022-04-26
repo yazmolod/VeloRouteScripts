@@ -31,18 +31,27 @@ from math import hypot
 
 
 class DistanceCalculateFramework:
-    NAMERU_FIELD = 'NameRU'
-    PIC_FIELD = 'PIC'
-    NAMEEN_FIELD = 'NameEN'
-    KM_FIELD = 'km'
-    TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
-    
+    NAMERU_FIELD_NAME = 'NameRU'
+    PIC_FIELD_NAME = 'PIC'
+    NAMEEN_FIELD_NAME = 'NameEN'
+    KM_FIELD_NAME = 'km'    
     SIGN_ROUTECODE_FIELD_NAME = 'routcode'
     ROAD_ROUTECODE_FIELD_NAME = 'CODE'
+    
+    TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
     DISTANCE_CALCULATOR = QgsDistanceArea()
     DISTANCE_CALCULATOR.setEllipsoid('WGS84')
     
-    def __init__(self, sign_layer, poi_layers, main_roads_layer, secondary_roads_layer, height_map, graph_tolerance, feedback):
+    def __init__(
+            self, 
+            sign_layer, 
+            poi_layers, 
+            main_roads_layer, 
+            secondary_roads_layer, 
+            height_map, 
+            graph_tolerance, 
+            feedback,
+            ):
         self.feedback = feedback
         self.sign_layer = sign_layer
         self.poi_layers = poi_layers
@@ -184,7 +193,7 @@ class DistanceCalculateFramework:
     def iter_pois_by_name(self, name):
         for layer in self.poi_layers:
             for feature in layer.getFeatures():
-                if self.feature_has_field(feature, self.NAMERU_FIELD) and feature[self.NAMERU_FIELD] == name:
+                if self.feature_has_field(feature, self.NAMERU_FIELD_NAME) and feature[self.NAMERU_FIELD_NAME] == name:
                     yield layer, feature
                                  
         
@@ -230,8 +239,8 @@ class DistanceCalculateFramework:
         return all(self.feature_has_field(feature, i) for i in fieldnames)
             
     def is_service(self, feature, direction):
-        pic_field = '{}_{}'.format(self.PIC_FIELD, direction)
-        nameru_field = '{}{}'.format(self.NAMERU_FIELD, direction)
+        pic_field = '{}_{}'.format(self.PIC_FIELD_NAME, direction)
+        nameru_field = '{}{}'.format(self.NAMERU_FIELD_NAME, direction)
         if self.feature_has_fields(feature, pic_field, nameru_field):
             if feature[pic_field] != NULL and feature[pic_field] != 'N/A' and feature[nameru_field] == NULL:
                 return True   #TODO             
@@ -295,7 +304,7 @@ class DistanceCalculateFramework:
                     service_paths = []
                     service_packed_features = []
                     # find shortest path for every service
-                    service_names = sign_feature[self.PIC_FIELD + '_' + direction].split(' ')
+                    service_names = sign_feature[self.PIC_FIELD_NAME + '_' + direction].split(' ')
                     for service_name in service_names:
                         service_packed_feature = self.find_closest_service(sign_feature, service_name)
                         if service_packed_feature:
@@ -309,30 +318,30 @@ class DistanceCalculateFramework:
                     if service_paths:
                         if self.check_distance_beetween_services(service_packed_features):
                             closest_service_path = min(service_paths, key=lambda x: x['length_3d'])
-                            sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(closest_service_path['length_3d'])
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.format_length(closest_service_path['length_3d'])
                             yield closest_service_path
                         else:
                             self.feedback.pushInfo(f"Service distance more than 100 meters")
-                            sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
                     else:
                         self.feedback.pushInfo(f"No services found")
-                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
+                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
                 else:
                     # direction feature fields
-                    poi_layer, poi_feature = self.find_poi_by_name(sign_feature[self.NAMERU_FIELD + direction])
+                    poi_layer, poi_feature = self.find_poi_by_name(sign_feature[self.NAMERU_FIELD_NAME + direction])
                     if poi_feature is None:
-                        sign_feature[self.PIC_FIELD + '_' + direction] = 'N/A'
-                        sign_feature[self.NAMEEN_FIELD + direction] = 'N/A'
-                        sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'
+                        sign_feature[self.PIC_FIELD_NAME + '_' + direction] = 'N/A'
+                        sign_feature[self.NAMEEN_FIELD_NAME + direction] = 'N/A'
+                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
                     else:
-                        sign_feature[self.PIC_FIELD + '_' + direction] = poi_feature[self.PIC_FIELD.lower()]
-                        sign_feature[self.NAMEEN_FIELD + direction] = poi_feature[self.NAMEEN_FIELD]
+                        sign_feature[self.PIC_FIELD_NAME + '_' + direction] = poi_feature[self.PIC_FIELD_NAME.lower()]
+                        sign_feature[self.NAMEEN_FIELD_NAME + direction] = poi_feature[self.NAMEEN_FIELD_NAME]
                         path_feature = self.get_shortest_path_feature(sign_feature, poi_layer, poi_feature)
                         if path_feature:
-                            sign_feature[self.KM_FIELD + '_' + direction] = self.format_length(path_feature['length_3d'])
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.format_length(path_feature['length_3d'])
                             yield path_feature
                         else:
-                            sign_feature[self.KM_FIELD + '_' + direction] = 'N/A'              
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'              
                 # Update the progress bar
                 self.feedback.setProgress(counter / total * 100)
                 counter += 1    
@@ -347,30 +356,6 @@ class DistanceCalculateFramework:
         else:
             formatted_km = str(round(km, 1)).replace('.0', '')
         return formatted_km
-
-# sign_layer = QgsProject.instance().mapLayersByName('123_DIR')[0]
-# transport = QgsProject.instance().mapLayersByName('transport')[0]
-# poi = QgsProject.instance().mapLayersByName('POI')[0]
-# services = QgsProject.instance().mapLayersByName('services')[0]
-# locality = QgsProject.instance().mapLayersByName('locality')[0]
-# poi_layers = [transport, poi, services, locality]
-#
-# height_layer = QgsProject.instance().mapLayersByName('heights')[0]
-#
-# main_road_layer = QgsProject.instance().mapLayersByName('main_route')[0]   
-# secondary_road_layer = QgsProject.instance().mapLayersByName('secondary_routes')[0]   
-# tolerance = 0
-#
-#
-# framework = DistanceCalculateFramework(
-#             sign_layer, 
-#             poi_layers, 
-#             main_road_layer, 
-#             secondary_road_layer, 
-#             height_layer, 
-#             tolerance,
-#             FeedbackImitator()
-#             )
 
 
                 

@@ -10,10 +10,11 @@ from qgis.core import (
     QgsProcessing,
     QgsProcessingParameterString,
     QgsProcessingParameterFile,
-    QgsProcessingParameterDefinition
+    QgsProcessingParameterDefinition,
+    QgsProcessingParameterBoolean
     )
 from VeloRouteScripts import utils
-from .pages_framework import PageGeneratorFramework
+from VeloRouteScripts.pages_framework import PageGeneratorFramework
 from pathlib import Path
 
 def get_layout_names():
@@ -25,6 +26,7 @@ def get_layout_names():
 class PagesExporterAlgorithm(QgsProcessingAlgorithm):
     PARAM_EXPORT_LAYOUTS_ENUMS = 'PARAM_EXPORT_LAYOUTS'
     PARAM_EXPORT_LAYERS = 'PARAM_EXPORT_LAYERS'
+    PARAM_DEL_LAYOUT = 'PARAM_DEL_LAYOUT'
 
     def initAlgorithm(self, config):
         self.layout_names = get_layout_names()
@@ -44,8 +46,16 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
                 defaultValue = '123_DIR'
             )
         )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.PARAM_DEL_LAYOUT,
+                self.tr('Удалять макет после экспорта'),
+                defaultValue=False, 
+            )
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
+        del_layout = self.parameterAsBool(parameters, self.PARAM_DEL_LAYOUT, context)
         export_layers = self.parameterAsLayerList(parameters, self.PARAM_EXPORT_LAYERS, context)
         layout_enums = self.parameterAsEnums(parameters, self.PARAM_EXPORT_LAYOUTS_ENUMS, context)
         layout_names = [self.layout_names[i] for i in layout_enums]
@@ -53,7 +63,7 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
             feedback,
             export_layers,
             )
-        framework.export_layouts_by_names(layout_names)
+        framework.export_layouts_by_names(layout_names, del_layout)
         return {}
 
     def name(self):
@@ -73,6 +83,26 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
 
     def createInstance(self):
         return PagesExporterAlgorithm()
+    
+    def shortHelpString(self):
+        return '<b>Принцип работы</b><br>'\
+                'Алгоритм проходится по каждому макеты, выключает видимость всех '\
+                'носителей кроме того, который привязан к данному макету, и экспортирует в сгенерированную папку pdf<br><br>'\
+                '<b>ВАЖНО</b><br>'\
+                'Основная причина, почему экспорт был вынесен в отдельный алгоритм - '\
+                'нестабильность работы экспорта в QGIS. Иногда листы экспортируется сразу все и '\
+                'без проблем, но чаще всего программа просто крашится. Поэтому '\
+                '<b>ОБЯЗАТЕЛЬНО СОХРАНИТЕ ПРОЕКТ ПЕРЕД ИСПОЛЬЗОВАНИЕМ ДАННОГО АЛГОРИТМА.</b> Возможно, экспортировать все листы получится в несколько заходов<br><br>'\
+                '<b>Параметры</b><ul>'\
+                '<li><b>Листы для экспорта</b> - выбираем созданные алгоритмом генерации листов макеты</li>'\
+                '<li><b>Слои для генерации</b> - здесь следует выбрать абсолютно все слои, которые не должны отображаться целиком на листе</li>'\
+                '<li><b>Удалять макет после экспорта</b> - при успешном экспорте макет будет удален из проекта</li>'\
+                '</ul>'\
+                '<b>Результат</b><ul>'\
+                '<li>Создастся папка типа pdf/дата выгрузки, в которой будут созданы pdf файлы. Имена pdf файлов соответствуют их номеру</li>'\
+                '</ul>'
+                
+                
     
 
 class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
@@ -108,7 +138,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterMultipleLayers(
                 self.PARAM_EXPORT_LAYERS,
-                self.tr('Cлои для генерации'),
+                self.tr('Cлои носителей для генерации'),
                 QgsProcessing.TypeVectorPoint,
                 defaultValue = '123_DIR'
             )
@@ -117,7 +147,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.PARAM_LAYOUT_NAME_ENUM, 
-                self.tr('Названия шаблона макета'), 
+                self.tr('Название шаблона макета'), 
                 options = self.layout_names,
                 defaultValue = 0,
                 )
@@ -213,7 +243,6 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
             )
         logger.log_info('Start framework')
         layouts = framework.generate_layouts()
-        # framework.export_layouts(layouts)
         return {}
 
     def name(self):
@@ -233,6 +262,28 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
 
     def createInstance(self):
         return PagesGeneratorAlgorithm()
+    
+    def shortHelpString(self):
+        return '<b>Принцип работы</b><br>'\
+                'Данный алгоритм позволяет на основании макета-шаблона сгенерировать '\
+                'макеты с обновленными отображениями объекта и информацией по нему. '\
+                'Порядок сгенерированных макетов базируется на географическом положении носителя<br><br>'\
+                '<b>Параметры</b><ul>'\
+                '<li><b>Коды участков</b> - для объектов с каким кодов нужно сгенерировать макеты. Значения берутся из слоя с именем типа “main_route”</li>'\
+                '<li><b>Слои носителей для генерации</b> - на объектов этих слоев будут сгенерированы макеты '\
+                '(если код объекта присутствует в кодах требуемых участков)</li>'\
+                '<li><b>Название шаблона макета</b> - на основании этого макета будут сгенерированы новые макеты</li>'\
+                '<li>Папка с картинками общих видов носителей - папка, в которой содержатся изображения с видами носителей. '\
+                'Ищется автоматически в папке проекта по содержанию в названии “wf”</li>'\
+                '<li><b>Перечень параметров ID</b> - в них зафиксированы id элементов макета, '\
+                'которые подлежат обновлению для каждого конкретного объекта. Для удобства '\
+                '(чтобы каждый раз не заполнять самостоятельно) рекомендуется сохранить дефолтные значения '\
+                'и проследить, чтобы в макеты они были названы именно так</li>'\
+                '</ul>'\
+                '<b>Результат</b><ul>'\
+                '<li>Будут сгенерированы макеты с именем типа “Layout N”, '\
+                'в которых будут обновлены данные для конкретного носителя и зафиксированы данные для экспорта</li>'\
+                '</ul>'
     
     ### CUSTOM ###
     
