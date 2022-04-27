@@ -25,12 +25,17 @@ class FeedbackLogger:
     def get_logger(self):
         logger = logging.getLogger(self.name)
         logger.setLevel(logging.DEBUG)
-        file = Path(QgsProject.instance().homePath(), 'veloscripts.log')
-        formatter = logging.Formatter("[%(asctime)s][%(name)s] %(levelname)s - %(message)s")
-        file_handler = logging.FileHandler(str(file), 'a', encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        home_path = QgsProject.instance().homePath()
+        if home_path:
+            file = Path(home_path, 'veloscripts.log')
+            formatter = logging.Formatter("[%(asctime)s][%(name)s] %(levelname)s - %(message)s")
+            try:
+                file_handler = logging.FileHandler(str(file), 'a', encoding='utf-8')
+                file_handler.setLevel(logging.DEBUG)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
+            except OSError:
+                pass
         return logger
 
     def clean(self):
@@ -51,8 +56,6 @@ class FeedbackLogger:
         self.logger.error(msg)
         if self.feedback is not None:
             self.feedback.reportError(f'[{self.name}][ERROR] {msg}')
-
-LOGGER = FeedbackLogger(__name__)
 
 def draw_line(crs, *geometries):
     layer = QgsVectorLayer('MultiLineString', 'debug', "memory")
@@ -90,6 +93,9 @@ def get_main_road_layer():
     logger = FeedbackLogger(__name__)
     logger.log_error('Cant find main road layer')
     del logger
+    
+def save_project():
+    return QgsProject.instance().write()
         
 
 class FeedbackImitator:
@@ -126,10 +132,10 @@ class PackedFeature:
         
 ### POINTS SORTING ###
 
-def grouping_points(road_layer, poi_packed_features):
+def grouping_points(road_layer, pt_packed_features):
     spatial = QgsSpatialIndex(road_layer.getFeatures())
     groups = {}
-    for pt_f in poi_packed_features:
+    for pt_f in pt_packed_features:
         neighbor = spatial.nearestNeighbor(pt_f.get_transformed_geometry(road_layer.sourceCrs()).asPoint(), 1)[0]
         group = groups.get(neighbor, [])
         group.append(pt_f)
@@ -146,23 +152,23 @@ def is_road_feature_reversed(road_packed_feature):
     diff = end_pt - start_pt
     return diff.y() < 0 and diff.x() > 0
 
-def sort_grouped_points(road_packed_feature, poi_packed_features):
+def sort_grouped_points(road_packed_feature, pt_packed_features):
     reversed = is_road_feature_reversed(road_packed_feature)
     return sorted(
-        poi_packed_features,
+        pt_packed_features,
         key=lambda x: road_packed_feature.feature.geometry().lineLocatePoint(x.get_transformed_geometry(road_packed_feature.layer.sourceCrs())),
         reverse=reversed
         )
 
-def iter_pois_along_road(road_layer, poi_layers, feedback):
+def iter_points_along_road(road_layer, pt_layers, feedback):
     logger = FeedbackLogger(__name__, feedback)
     road_packed_feature_from_id = lambda x: PackedFeature(next(road_layer.getFeatures(QgsFeatureRequest(x))), road_layer)
-    poi_packed_features = []
-    for l in poi_layers:
-        poi_packed_features += PackedFeature.from_layer(l)
+    pt_packed_features = []
+    for l in pt_layers:
+        pt_packed_features += PackedFeature.from_layer(l)
     # grouping by closest road
     logger.log_info('[IterAlongRoad] Grouping points')
-    grouping_result = grouping_points(road_layer, poi_packed_features)
+    grouping_result = grouping_points(road_layer, pt_packed_features)
     # sorting roads by centoids
     logger.log_info('[IterAlongRoad] Sorting roads')
     sorted_grouping_keys = sorted(
@@ -174,8 +180,8 @@ def iter_pois_along_road(road_layer, poi_layers, feedback):
         road_packed_feature = road_packed_feature_from_id(road_id)
         # sort points linked to road
         pt_group_sorted = sort_grouped_points(road_packed_feature, pt_group)
-        for i, pt_f in enumerate(pt_group_sorted):
+        for i, pt_packed_feature in enumerate(pt_group_sorted):
             logger.log_info(f'[IterAlongRoad] Yield points {i+1}/{len(pt_group_sorted)} (road {road_id})')
-            yield pt_f.layer, pt_f.feature
+            yield road_packed_feature, pt_packed_feature
     del logger
     

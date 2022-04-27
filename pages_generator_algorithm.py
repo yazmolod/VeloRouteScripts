@@ -55,6 +55,7 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+        utils.save_project()
         del_layout = self.parameterAsBool(parameters, self.PARAM_DEL_LAYOUT, context)
         export_layers = self.parameterAsLayerList(parameters, self.PARAM_EXPORT_LAYERS, context)
         layout_enums = self.parameterAsEnums(parameters, self.PARAM_EXPORT_LAYOUTS_ENUMS, context)
@@ -92,7 +93,7 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
                 'Основная причина, почему экспорт был вынесен в отдельный алгоритм - '\
                 'нестабильность работы экспорта в QGIS. Иногда листы экспортируется сразу все и '\
                 'без проблем, но чаще всего программа просто крашится. Поэтому '\
-                '<b>ОБЯЗАТЕЛЬНО СОХРАНИТЕ ПРОЕКТ ПЕРЕД ИСПОЛЬЗОВАНИЕМ ДАННОГО АЛГОРИТМА.</b> Возможно, экспортировать все листы получится в несколько заходов<br><br>'\
+                '<b>алгоритм сохраняет проект в начале работы.</b> Возможно, экспортировать все листы придется в несколько заходов<br><br>'\
                 '<b>Параметры</b><ul>'\
                 '<li><b>Листы для экспорта</b> - выбираем созданные алгоритмом генерации листов макеты</li>'\
                 '<li><b>Слои для генерации</b> - здесь следует выбрать абсолютно все слои, которые не должны отображаться целиком на листе</li>'\
@@ -101,8 +102,6 @@ class PagesExporterAlgorithm(QgsProcessingAlgorithm):
                 '<b>Результат</b><ul>'\
                 '<li>Создастся папка типа pdf/дата выгрузки, в которой будут созданы pdf файлы. Имена pdf файлов соответствуют их номеру</li>'\
                 '</ul>'
-                
-                
     
 
 class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):

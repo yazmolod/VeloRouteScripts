@@ -17,7 +17,7 @@ import time
 
 
 class PageGeneratorFramework:    
-    nonprint_table_columns = ['id', 'Num', 'type', 'routcode', 'degree']    
+    nonprint_table_columns = ['id', 'num', 'type', 'routcode', 'degree']    
     id_field = 'id'
     feature_route_code_field = 'routcode'
     road_route_code_field = 'CODE'   
@@ -70,16 +70,16 @@ class PageGeneratorFramework:
         
     def get_pdf_settings(self):
         settings = QgsLayoutExporter.PdfExportSettings()
-        settings.forceVectorOutput = False
+        # settings.forceVectorOutput = False
         settings.exportMetadata = False
         settings.textRenderFormat = QgsRenderContext.TextFormatAlwaysOutlines
         settings.appendGeoreference = False 
         settings.includeGeoPdfFeatures = False
-        settings.rasterizeWholeImage = True
+        # settings.rasterizeWholeImage = True
         return settings
 
     def export(self, folder, layout, page):
-        filepath = folder / ('%05d.pdf' % int(page))
+        filepath = Path(folder, '%05d.pdf' % int(page))
         self.logger.log_info(f'File {filepath} saving...')
         settings = self.get_pdf_settings()
         exporter = QgsLayoutExporter(layout)
@@ -189,9 +189,9 @@ class PageGeneratorFramework:
         
     def iter_ordered_features(self):
         self.turn_on_all_features()
-        for layer, feature in utils.iter_pois_along_road(self.road_layer, self.layers, self.feedback):
-            if feature[self.feature_route_code_field] in self.route_codes:                
-                yield layer, feature
+        for road_packed_feature, pt_packed_feature in utils.iter_points_along_road(self.road_layer, self.layers, self.feedback):
+            if pt_packed_feature.feature[self.feature_route_code_field] in self.route_codes:                
+                yield pt_packed_feature
                      
     def get_transformed_current_point(self, target_crs):
         geometry = self.current_feature.geometry()
@@ -205,7 +205,7 @@ class PageGeneratorFramework:
         feature_attributes = self.current_feature.attributes()
         trs = []
         for k,v in zip(feature_fields, feature_attributes):
-            if k not in self.nonprint_table_columns:
+            if k.lower() not in self.nonprint_table_columns:
                 trs.append(f'<tr><td>{k}</td><td>{v}</td></tr>')
         html_table = f'<table><thead><tr><th>Инфоплан</th><th></th></tr></thead><tbody>{"".join(trs)}</tbody></table>'
         table_item.setHtml(html_table)
@@ -240,13 +240,16 @@ class PageGeneratorFramework:
             layer.commitChanges()
     
     def generate_layouts(self):
-        self.generate_id()         
+        self.generate_id()
+        export_folder = self.generate_export_folder()      
         self.current_page = 1
         layouts = []
-        for layer, feature in self.iter_ordered_features():
+        for pt_packed_feature in self.iter_ordered_features():
             if self.feedback.isCanceled():
                 break
             else:
+                layer = pt_packed_feature.layer
+                feature = pt_packed_feature.feature
                 self.logger.log_info(f'Generating layout: layer = {layer.name()}, feature_id = {feature[self.id_field]}')
                 self.current_feature = feature
                 self.current_layer = layer
@@ -257,6 +260,7 @@ class PageGeneratorFramework:
                     'export_layer_id': layer.id(),
                     'export_feature_id': feature[self.id_field],
                     'export_page': self.current_page,
+                    'export_folder': str(export_folder),
                 }
                 QgsExpressionContextUtils.setLayoutVariables(layout, layout_variables)
                 layouts.append(layout)
@@ -268,7 +272,6 @@ class PageGeneratorFramework:
         return self.export_layouts(layouts, del_layout=del_layout)
     
     def export_layouts(self, layouts, del_layout=False):
-        folder = self.generate_export_folder()
         self.turn_off_all_features()
         for layout in layouts:
             if self.feedback.isCanceled():
@@ -278,6 +281,7 @@ class PageGeneratorFramework:
                 layer_id = layout_scope.variable('export_layer_id')
                 feature_id = layout_scope.variable('export_feature_id')
                 page = layout_scope.variable('export_page')
+                folder = layout_scope.variable('export_folder')
                 if not layer_id or not feature_id or not page:
                     self.logger.log_error("Can't find custom property for layer or feature")
                 else:
@@ -287,6 +291,7 @@ class PageGeneratorFramework:
                     self.export(folder, layout, page)
                     if del_layout:
                         self.remove_layout(layout)
+                        utils.save_project()
                     layer.setSubsetString('{}=-1'.format(self.id_field))
         self.turn_on_all_features()
         del self.logger

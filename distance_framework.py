@@ -36,6 +36,7 @@ class DistanceCalculateFramework:
     NAMEEN_FIELD_NAME = 'NameEN'
     KM_FIELD_NAME = 'km'    
     SIGN_ROUTECODE_FIELD_NAME = 'routcode'
+    SIGN_NUM_FIELD_NAME = 'Num'
     ROAD_ROUTECODE_FIELD_NAME = 'CODE'
     
     TARGET_CRS = QgsCoordinateReferenceSystem("EPSG:4326")
@@ -291,13 +292,19 @@ class DistanceCalculateFramework:
         self.feedback.setProgress(0)
         total = 100.0 / (self.sign_layer.featureCount()*8) if self.sign_layer.featureCount() else 0        
         counter = 1
+        feature_num = 0
         self.sign_layer.startEditing()
-        for sign_feature in self.sign_layer.getFeatures():
+        # for sign_feature in self.sign_layer.getFeatures():
+        for road_packed_feature, pt_packed_feature in utils.iter_points_along_road(self.main_roads_layer, [self.sign_layer], self.feedback):
+            feature_num += 1
+            sign_feature = pt_packed_feature.feature
             # если была нажата кнопка cancel - прерываемся
             if self.feedback.isCanceled():
                 break
             # general feature fields
-            sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = self.get_closest_road(sign_feature)[self.ROAD_ROUTECODE_FIELD_NAME]
+            # sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = self.get_closest_road(sign_feature)[self.ROAD_ROUTECODE_FIELD_NAME]
+            sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = road_packed_feature.feature[self.ROAD_ROUTECODE_FIELD_NAME]
+            sign_feature[self.SIGN_NUM_FIELD_NAME] = feature_num
             # iter all direction fields
             for direction in self.iter_directions():
                 if self.is_service(sign_feature, direction):

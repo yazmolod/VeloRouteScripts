@@ -23,7 +23,8 @@ from qgis.core import (
     QgsProcessingParameterVectorLayer,
     )
 from qgis.PyQt.QtCore import QVariant
-from .distance_framework import DistanceCalculateFramework
+from VeloRouteScripts.distance_framework import DistanceCalculateFramework
+from VeloRouteScripts import utils
 
 
 class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
@@ -43,16 +44,14 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
     TOLERANCE = 'TOLERANCE'
 
     def initAlgorithm(self, config):
-        """
-        Here we define the inputs and output of the algorithm, along
-        with some other properties.
-        """
+        main_route_layer = utils.get_main_road_layer()
+        main_route_layer_name = main_route_layer.name() if main_route_layer else None
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.SIGN_INPUT,
                 self.tr('Слой с носителями'),
-                types=[QgsProcessing.TypeVectorPoint],
-                defaultValue='123_DIR'
+                types = [QgsProcessing.TypeVectorPoint],
+                defaultValue = '123_DIR'
             )
         )        
         self.addParameter(
@@ -60,24 +59,24 @@ class DistanceCalculateAlgorithm(QgsProcessingAlgorithm):
                 self.POIS_INPUT,
                 self.tr('Слои с объектами'),
                 QgsProcessing.TypeVectorPoint,
-                defaultValue=['POI', 'locality', 'transport', 'services']
+                defaultValue = ['POI', 'locality', 'transport', 'services']
             )
         )        
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.MAIN_ROAD_INPUT,
                 self.tr('Слой с главными дорогами'),
-                types=[QgsProcessing.TypeVectorLine],
-                defaultValue='main_route'
+                types = [QgsProcessing.TypeVectorLine],
+                defaultValue = main_route_layer_name
             )
         )    
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.SECONDARY_ROAD_INPUT,
                 self.tr('Слой с доп. дорогами'),
-                types=[QgsProcessing.TypeVectorLine],
-                defaultValue='secondary_routes'
-                
+                types = [QgsProcessing.TypeVectorLine],
+                defaultValue = 'secondary_routes',
+                optional=True,                
             )
         )    
         self.addParameter(
