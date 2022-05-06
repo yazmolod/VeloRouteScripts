@@ -16,6 +16,7 @@ from pathlib import Path
 from datetime import datetime
 import re
 import csv
+from io import StringIO
 from VeloRouteScripts import utils
 
 class CsvExportAlgorithm(QgsProcessingAlgorithm):
@@ -130,10 +131,17 @@ class CsvExportAlgorithm(QgsProcessingAlgorithm):
     ### CUSTOM ###
     
     def load_pic_replace_table(self, path):
-        with open(path, 'r') as file:
-            reader = csv.reader(file, delimiter=',')
+        with open(path, 'rb') as file:
+            file_bytes = file.read()
+        try:
+            text = file_bytes.decode('utf-8')
+        except:
+            raise QgsProcessingException('Неизвестная кодировка файла замены пиктограмм (переведите в UTF-8)')
+        else:
+            text_io = StringIO(text)
+            reader = csv.reader(text_io, delimiter=',')
             result = dict(reader)
-        return result
+            return result
     
     def is_export_layer(self, map_name):
         pat = re.compile(r'\d+_[A-Z]+')

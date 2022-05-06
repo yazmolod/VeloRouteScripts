@@ -13,6 +13,7 @@ from qgis._core import (
     )
 from VeloRouteScripts import utils
 import time
+import os
 
 
 
@@ -158,15 +159,11 @@ class PageGeneratorFramework:
     def change_picture(self, layout):
         self.logger.log_info('Change wf pic...')
         pic_item = self.get_layout_item(layout, self.wf_pic_id)
-        pic_path = Path(pic_item.picturePath())
-        if pic_path.stem != self.current_layer.name():
-            new_path = pic_path.parent / (self.current_layer.name() + '.jpg')
-            if new_path.exists():
-                pic_item.setPicturePath(str(new_path))
-            else:
-                raise Exception(f'Path {new_path} not found!')
+        pic_path = os.path.join(self.wf_types_folder, self.current_layer.name() + '.jpg')
+        if os.path.exists(pic_path):
+            pic_item.setPicturePath(str(pic_path))
         else:
-            self.logger.log_info('No need change pic')
+            raise Exception(f'Path {pic_path} not found!')
         self.logger.log_info('DONE')
         
     def update_labels(self, layout):
@@ -265,6 +262,7 @@ class PageGeneratorFramework:
                 QgsExpressionContextUtils.setLayoutVariables(layout, layout_variables)
                 layouts.append(layout)
                 self.current_page += 1
+        utils.save_project()
         return layouts
     
     def export_layouts_by_names(self, layout_names, del_layout=False):

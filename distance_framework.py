@@ -43,6 +43,9 @@ class DistanceCalculateFramework:
     DISTANCE_CALCULATOR = QgsDistanceArea()
     DISTANCE_CALCULATOR.setEllipsoid('WGS84')
     
+    NAV = 'N/A'
+    ERRORV = 'Ошибка?'
+    
     def __init__(
             self, 
             sign_layer, 
@@ -53,6 +56,7 @@ class DistanceCalculateFramework:
             graph_tolerance, 
             feedback,
             ):
+        self.logger = FeedbackLogger('Distance Framework', feedback)
         self.feedback = feedback
         self.sign_layer = sign_layer
         self.poi_layers = poi_layers
@@ -92,14 +96,14 @@ class DistanceCalculateFramework:
         director.addStrategy(QgsNetworkDistanceStrategy())
         builder = QgsGraphBuilder(self.TARGET_CRS, True, self.graph_tolerance)
         tied_points_list = director.makeGraph(builder, additional_points, self.feedback)
-        self.feedback.pushInfo('Graph init...')
+        self.logger.log_info('Graph init...')
         self.network = builder.graph()
         # make tied edges
         for add_pt, tied_pt in zip(additional_points, tied_points_list):
             add_id = self.network.addVertex(add_pt)
             tied_id = self.network.findVertex(tied_pt)
             self.network.addEdge(add_id, tied_id, [QgsNetworkDistanceStrategy()])
-        self.feedback.pushInfo('Graph builded')
+        self.logger.log_info('Graph builded')
 
     def calc_vertex_distance(self, from_vertex_id: int, to_vertex_id: int):
         pt1 = self.network.vertex(from_vertex_id).point()
@@ -157,7 +161,7 @@ class DistanceCalculateFramework:
         vertex_ids_path = []
         pointer = finish_vertex_id
         if finish_vertex_id not in came_from:
-            self.feedback.pushInfo('Path not found')
+            self.logger.log_info('Path not found')
             return None
         else:
             while pointer is not None:
@@ -240,10 +244,14 @@ class DistanceCalculateFramework:
         return all(self.feature_has_field(feature, i) for i in fieldnames)
             
     def is_service(self, feature, direction):
+        self.logger.log_debug('Check is service...')
         pic_field = '{}_{}'.format(self.PIC_FIELD_NAME, direction)
         nameru_field = '{}{}'.format(self.NAMERU_FIELD_NAME, direction)
+        pic_field_value = feature[pic_field]
+        nameru_field_value = feature[nameru_field]
         if self.feature_has_fields(feature, pic_field, nameru_field):
-            if feature[pic_field] != NULL and feature[pic_field] != 'N/A' and feature[nameru_field] == NULL:
+            if pic_field_value not in (self.NAV, NULL, self.ERRORV) and nameru_field_value == NULL:
+                self.logger.log_debug('SERVICE')
                 return True   #TODO             
         return False
         
@@ -253,10 +261,10 @@ class DistanceCalculateFramework:
         # calc shortest path
         vertex_ids = self.shortest_path(sign_geom.asPoint(), poi_geom.asPoint())
         if not vertex_ids:
-            self.feedback.reportError('[processAlgorithm] Cannot build shortest path')
+            self.logger.log_error('[processAlgorithm] Cannot build shortest path')
             return None
         else:
-            # self.feedback.pushInfo('[processAlgorithm] Shortest path calculated')
+            # self.logger.log_info('[processAlgorithm] Shortest path calculated')
             # make path feature
             path_feature = self.make_path_feature(vertex_ids)
             return path_feature
@@ -287,20 +295,12 @@ class DistanceCalculateFramework:
         
         
     def main(self):
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        self.feedback.setProgress(0)
-        total = 100.0 / (self.sign_layer.featureCount()*8) if self.sign_layer.featureCount() else 0        
-        counter = 1
         feature_num = 0
         self.sign_layer.startEditing()
         # for sign_feature in self.sign_layer.getFeatures():
         for road_packed_feature, pt_packed_feature in utils.iter_points_along_road(self.main_roads_layer, [self.sign_layer], self.feedback):
             feature_num += 1
             sign_feature = pt_packed_feature.feature
-            # если была нажата кнопка cancel - прерываемся
-            if self.feedback.isCanceled():
-                break
             # general feature fields
             # sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = self.get_closest_road(sign_feature)[self.ROAD_ROUTECODE_FIELD_NAME]
             sign_feature[self.SIGN_ROUTECODE_FIELD_NAME] = road_packed_feature.feature[self.ROAD_ROUTECODE_FIELD_NAME]
@@ -319,7 +319,7 @@ class DistanceCalculateFramework:
                             service_paths.append(path_feature)
                             service_packed_features.append(service_packed_feature)
                         else:
-                            self.feedback.pushInfo(f"Can't find service {service_name}")
+                            self.logger.log_info(f"Can't find service {service_name}")
                             
                     # all paths find and all shortest than 100 meters
                     if service_paths:
@@ -328,30 +328,34 @@ class DistanceCalculateFramework:
                             sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.format_length(closest_service_path['length_3d'])
                             yield closest_service_path
                         else:
-                            self.feedback.pushInfo(f"Service distance more than 100 meters")
-                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
+                            self.logger.log_info(f"Service distance more than 100 meters")
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.NAV
                     else:
-                        self.feedback.pushInfo(f"No services found")
-                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
+                        self.logger.log_info(f"No services found")
+                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.NAV
                 else:
                     # direction feature fields
-                    poi_layer, poi_feature = self.find_poi_by_name(sign_feature[self.NAMERU_FIELD_NAME + direction])
-                    if poi_feature is None:
-                        sign_feature[self.PIC_FIELD_NAME + '_' + direction] = 'N/A'
-                        sign_feature[self.NAMEEN_FIELD_NAME + direction] = 'N/A'
-                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'
+                    target_name = sign_feature[self.NAMERU_FIELD_NAME + direction]
+                    self.logger.log_debug(f'Target: {target_name}')
+                    if target_name == NULL or target_name == self.NAV:
+                        sign_feature[self.PIC_FIELD_NAME + '_' + direction] = self.NAV
+                        sign_feature[self.NAMEEN_FIELD_NAME + direction] = self.NAV
+                        sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.NAV
                     else:
-                        sign_feature[self.PIC_FIELD_NAME + '_' + direction] = poi_feature[self.PIC_FIELD_NAME.lower()]
-                        sign_feature[self.NAMEEN_FIELD_NAME + direction] = poi_feature[self.NAMEEN_FIELD_NAME]
-                        path_feature = self.get_shortest_path_feature(sign_feature, poi_layer, poi_feature)
-                        if path_feature:
-                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.format_length(path_feature['length_3d'])
-                            yield path_feature
+                        poi_layer, poi_feature = self.find_poi_by_name(target_name)
+                        if poi_feature is None:
+                            sign_feature[self.PIC_FIELD_NAME + '_' + direction] = self.ERRORV
+                            sign_feature[self.NAMEEN_FIELD_NAME + direction] = self.ERRORV
+                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.ERRORV
                         else:
-                            sign_feature[self.KM_FIELD_NAME + '_' + direction] = 'N/A'              
-                # Update the progress bar
-                self.feedback.setProgress(counter / total * 100)
-                counter += 1    
+                            sign_feature[self.PIC_FIELD_NAME + '_' + direction] = poi_feature[self.PIC_FIELD_NAME.lower()]
+                            sign_feature[self.NAMEEN_FIELD_NAME + direction] = poi_feature[self.NAMEEN_FIELD_NAME]
+                            path_feature = self.get_shortest_path_feature(sign_feature, poi_layer, poi_feature)
+                            if path_feature:
+                                sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.format_length(path_feature['length_3d'])
+                                yield path_feature
+                            else:
+                                sign_feature[self.KM_FIELD_NAME + '_' + direction] = self.NAV              
             self.sign_layer.updateFeature(sign_feature)
         self.sign_layer.commitChanges()
 
