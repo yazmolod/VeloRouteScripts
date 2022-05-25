@@ -139,7 +139,7 @@ class PagesGeneratorAlgorithm(QgsProcessingAlgorithm):
                 self.PARAM_EXPORT_LAYERS,
                 self.tr('Cлои носителей для генерации'),
                 QgsProcessing.TypeVectorPoint,
-                defaultValue = '123_DIR'
+                # defaultValue не ставим - не отображается весь список слоев
             )
         )
         
